@@ -118,7 +118,10 @@ impl VaultManager {
             && !self.is_cache_expired(entry.cached_at)
         {
             // Verify the file hasn't been modified externally since we cached it
-            if !self.is_file_modified_since(&vault_path, entry.cached_at).await {
+            if !self
+                .is_file_modified_since(&vault_path, entry.cached_at)
+                .await
+            {
                 return Ok(entry.file.content.clone());
             }
             log::debug!(
