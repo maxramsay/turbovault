@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Stale cache on external file modifications**: `read_note` now validates cache entries against the file's modification time on disk, so externally modified files (git sync, direct writes, other processes) are always read fresh instead of serving stale/empty cached content (fixes #5)
 - **Server version mismatch**: MCP server macro now correctly advertises the current crate version to clients (was hardcoded to 1.1.6)
 - **Repository metadata on crates.io**: All 8 workspace crates now set `repository.workspace = true`, so every crate on crates.io links back to the GitHub repo (fixes #4)
 - **Removed unused variable** in `explain_vault` tool
