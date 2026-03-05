@@ -42,9 +42,6 @@ pulldown-cmark = "0.13"      # CommonMark parser with OFM extensions (headings, 
 # Observability & Diagnostics
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
-opentelemetry = "0.28"
-tracing-opentelemetry = "0.28"
-opentelemetry-otlp = { version = "0.28", features = ["tonic"] }
 
 # Data structures & algorithms
 petgraph = "0.6"             # 2.1M+ downloads, ecosystem standard for graphs

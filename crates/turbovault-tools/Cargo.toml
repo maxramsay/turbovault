@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = true
 description = "MCP tools implementation using turbomcp"
 documentation = "https://docs.rs/turbovault-tools"

@@ -2,8 +2,8 @@
 
 use clap::Parser;
 use std::path::PathBuf;
-use turbomcp::telemetry::TelemetryConfig;
 use turbomcp::McpHandlerExt;
+use turbomcp::telemetry::TelemetryConfig;
 use turbovault::ObsidianMcpServer;
 use turbovault_core::VaultConfig;
 use turbovault_core::cache::VaultCache;
