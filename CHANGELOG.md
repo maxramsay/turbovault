@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Standardized response serialization**: All tools now use `StandardResponse::to_json()` consistently instead of mixed serialization patterns
 - **Removed stale workspace dependencies**: Dropped unused `opentelemetry`, `tracing-opentelemetry`, and `opentelemetry-otlp` workspace deps (v0.28) that were superseded by turbomcp-telemetry (v0.31)
 
+### Added
+
+- **Cross-platform prebuilt binaries**: Release workflow now builds binaries for 7 targets (Linux glibc/musl x86_64/ARM64, macOS x86_64/ARM64, Windows x86_64) with macOS code signing/notarization, SHA256 checksums, and GitHub Releases
+- **CI workflow modernized**: Bumped to `actions/checkout@v5`, stable Rust toolchain, `CARGO_TERM_COLOR`
+
 ### Fixed
 
 - **Server version mismatch**: MCP server macro now correctly advertises the current crate version to clients (was hardcoded to 1.1.6)
