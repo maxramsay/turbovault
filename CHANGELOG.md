@@ -5,6 +5,26 @@ All notable changes to TurboVault will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.8] - 2026-03-12
+
+### Added
+
+- **`get_notes_info` tool**: Bulk note metadata retrieval — returns `exists`, `size_bytes`, `modified_at`, and `has_frontmatter` for a list of paths without reading full file content, enabling efficient batch filesystem inspection.
+- **`write_file_with_mode` tool**: Append and prepend support for file writes. Accepts a `mode` parameter (`overwrite`, `append`, `prepend`) and correctly handles frontmatter boundaries when prepending to YAML-frontmatter files.
+- **Cross-filesystem move support**: `move_file` now handles `CrossesDevices` errors by falling back to a copy-then-delete strategy, maintaining atomicity guarantees across filesystem boundaries.
+
+### Changed
+
+- **`write_file` delegates to `write_file_with_mode`**: Existing `write_file` calls are fully backward-compatible and default to `WriteMode::Overwrite`.
+- **`resolve_path` is now `pub`**: `VaultManager::resolve_path` is now publicly visible so tool layers (`FileTools`, `DataTools`) can reuse the battle-tested `path_trav`-backed security check without duplicating logic.
+- **`read_file` always reads from disk**: Removed the in-memory `VaultFile` cache path from `read_file` — the cache stores parsed content with frontmatter stripped, so bypassing it ensures callers always receive the complete raw file including frontmatter.
+- **Updated installation instructions and usage documentation in README**: Clarified TurboVault as both a Rust SDK and an MCP server with two distinct usage modes.
+
+### Fixed
+
+- **Path traversal protection unified**: `delete_file`, `move_file`, `copy_file`, and `get_notes_info` now all go through `VaultManager::resolve_path` (backed by the `path_trav` crate) instead of ad-hoc `starts_with` checks, closing potential bypass vectors.
+- **Stale `#[allow(dead_code)]` annotations**: `is_cache_expired` and `is_file_modified_since` are kept for future use and annotated with `#[allow(dead_code)]` to silence compiler warnings.
+
 ## [1.2.7] - 2026-03-04
 
 ### Changed
@@ -138,6 +158,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Atomic file operations with rollback support
 - Configuration profiles (development, production, readonly, high-performance)
 
+[1.2.8]: https://github.com/epistates/turbovault/compare/v1.2.7...v1.2.8
 [1.2.7]: https://github.com/epistates/turbovault/compare/v1.2.6...v1.2.7
 [1.2.6]: https://github.com/epistates/turbovault/compare/v1.2.5...v1.2.6
 [1.2.5]: https://github.com/epistates/turbovault/compare/v1.2.4...v1.2.5
