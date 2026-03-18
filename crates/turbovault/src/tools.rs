@@ -2040,101 +2040,194 @@ impl ObsidianMcpServer {
         }
     }
 
-    /// Insert content under a specific heading
+    /// Insert content relative to a heading, block reference, or frontmatter field
     #[tool(
-        description = "Insert content under a specific heading in a note. Finds the heading and inserts content after it, before the next heading of the same or higher level",
-        usage = "Use for structured note editing — adding items under specific sections without replacing the whole file. Heading match is case-insensitive and ignores leading #. If heading is not found, returns an error with available headings",
+        description = "Insert content into a note relative to a heading, block reference, or frontmatter field. Supports append (after section), prepend (right after target), or replace (replace section content)",
+        usage = "Use for structured note editing — adding items under specific sections, inserting at block references, or updating frontmatter fields. target_type: 'heading', 'block', or 'frontmatter'. operation: 'append', 'prepend', or 'replace'",
         performance = "Fast (<20ms)",
         related = ["write_note", "edit_note", "read_note"],
-        examples = ["heading: '## Session Notes', content: '### New Session\\n...'", "heading: 'Actions', content: '- [ ] New task'"]
+        examples = ["target_type: heading, target: 'Session Notes', operation: append", "target_type: frontmatter, target: 'status', operation: replace"]
     )]
     async fn patch_note(
         &self,
         path: String,
-        heading: String,
+        target_type: String,
+        target: String,
+        operation: String,
         content: String,
-        mode: Option<String>,
     ) -> McpResult<serde_json::Value> {
         let (vault_name, manager) = self.get_vault_pair().await?;
         let tools = FileTools::new(manager);
 
         let existing = tools.read_file(&path).await.map_err(to_mcp_error)?;
-        let lines: Vec<&str> = existing.lines().collect();
 
-        // Normalize the target heading (strip leading # and whitespace)
-        let target = heading.trim().trim_start_matches('#').trim();
-        let insert_mode = mode.as_deref().unwrap_or("append"); // append (after heading content) or prepend (right after heading line)
-
-        // Find the heading line
-        let mut heading_line_idx = None;
-        let mut heading_level = 0;
-        let mut available_headings: Vec<String> = Vec::new();
-
-        for (i, line) in lines.iter().enumerate() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('#') {
-                let level = trimmed.chars().take_while(|c| *c == '#').count();
-                let heading_text = trimmed.trim_start_matches('#').trim();
-                available_headings.push(trimmed.to_string());
-
-                if heading_text.eq_ignore_ascii_case(target) && heading_line_idx.is_none() {
-                    heading_line_idx = Some(i);
-                    heading_level = level;
-                }
-            }
-        }
-
-        let heading_idx = match heading_line_idx {
-            Some(idx) => idx,
-            None => {
-                return Err(McpError::invalid_params(format!(
-                    "Heading '{}' not found. Available headings: {}",
-                    heading,
-                    available_headings.join(", ")
-                )));
-            }
+        let op = match operation.to_lowercase().as_str() {
+            "append" | "prepend" | "replace" => operation.to_lowercase(),
+            _ => return Err(McpError::invalid_params(
+                format!("Invalid operation '{}'. Valid: append, prepend, replace", operation)
+            )),
         };
 
-        // Find the end of this section (next heading of same or higher level)
-        let mut insert_pos = lines.len(); // default: end of file
-        for i in (heading_idx + 1)..lines.len() {
-            let trimmed = lines[i].trim();
-            if trimmed.starts_with('#') {
-                let level = trimmed.chars().take_while(|c| *c == '#').count();
-                if level <= heading_level {
-                    insert_pos = i;
-                    break;
+        let new_content = match target_type.to_lowercase().as_str() {
+            "heading" => {
+                let lines: Vec<&str> = existing.lines().collect();
+                let target_heading = target.trim().trim_start_matches('#').trim();
+
+                // Find the heading line
+                let mut heading_line_idx = None;
+                let mut heading_level = 0;
+                let mut available_headings: Vec<String> = Vec::new();
+
+                for (i, line) in lines.iter().enumerate() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with('#') {
+                        let level = trimmed.chars().take_while(|c| *c == '#').count();
+                        let heading_text = trimmed.trim_start_matches('#').trim();
+                        available_headings.push(trimmed.to_string());
+
+                        if heading_text.eq_ignore_ascii_case(target_heading) && heading_line_idx.is_none() {
+                            heading_line_idx = Some(i);
+                            heading_level = level;
+                        }
+                    }
+                }
+
+                let heading_idx = match heading_line_idx {
+                    Some(idx) => idx,
+                    None => {
+                        return Err(McpError::invalid_params(format!(
+                            "Heading '{}' not found. Available headings: {}",
+                            target, available_headings.join(", ")
+                        )));
+                    }
+                };
+
+                // Find the end of this section
+                let mut section_end = lines.len();
+                for i in (heading_idx + 1)..lines.len() {
+                    let trimmed = lines[i].trim();
+                    if trimmed.starts_with('#') {
+                        let level = trimmed.chars().take_while(|c| *c == '#').count();
+                        if level <= heading_level {
+                            section_end = i;
+                            break;
+                        }
+                    }
+                }
+
+                let mut new_lines: Vec<String> = Vec::with_capacity(lines.len() + 10);
+
+                match op.as_str() {
+                    "prepend" => {
+                        new_lines.extend(lines[..=heading_idx].iter().map(|s| s.to_string()));
+                        new_lines.push(String::new());
+                        for line in content.lines() { new_lines.push(line.to_string()); }
+                        new_lines.extend(lines[heading_idx + 1..].iter().map(|s| s.to_string()));
+                    }
+                    "append" => {
+                        new_lines.extend(lines[..section_end].iter().map(|s| s.to_string()));
+                        if !new_lines.last().map_or(true, |l| l.trim().is_empty()) {
+                            new_lines.push(String::new());
+                        }
+                        for line in content.lines() { new_lines.push(line.to_string()); }
+                        if section_end < lines.len() { new_lines.push(String::new()); }
+                        new_lines.extend(lines[section_end..].iter().map(|s| s.to_string()));
+                    }
+                    "replace" => {
+                        new_lines.extend(lines[..=heading_idx].iter().map(|s| s.to_string()));
+                        new_lines.push(String::new());
+                        for line in content.lines() { new_lines.push(line.to_string()); }
+                        if section_end < lines.len() { new_lines.push(String::new()); }
+                        new_lines.extend(lines[section_end..].iter().map(|s| s.to_string()));
+                    }
+                    _ => unreachable!(),
+                }
+
+                new_lines.join("\n")
+            }
+            "block" => {
+                // Find block reference ^block-id
+                let block_ref = if target.starts_with('^') { target.clone() } else { format!("^{}", target) };
+                let lines: Vec<&str> = existing.lines().collect();
+
+                let block_idx = lines.iter().position(|line| line.contains(&block_ref));
+                match block_idx {
+                    Some(idx) => {
+                        let mut new_lines: Vec<String> = Vec::with_capacity(lines.len() + 5);
+                        match op.as_str() {
+                            "prepend" => {
+                                new_lines.extend(lines[..idx].iter().map(|s| s.to_string()));
+                                for line in content.lines() { new_lines.push(line.to_string()); }
+                                new_lines.extend(lines[idx..].iter().map(|s| s.to_string()));
+                            }
+                            "append" => {
+                                new_lines.extend(lines[..=idx].iter().map(|s| s.to_string()));
+                                for line in content.lines() { new_lines.push(line.to_string()); }
+                                new_lines.extend(lines[idx + 1..].iter().map(|s| s.to_string()));
+                            }
+                            "replace" => {
+                                new_lines.extend(lines[..idx].iter().map(|s| s.to_string()));
+                                for line in content.lines() { new_lines.push(line.to_string()); }
+                                new_lines.extend(lines[idx + 1..].iter().map(|s| s.to_string()));
+                            }
+                            _ => unreachable!(),
+                        }
+                        new_lines.join("\n")
+                    }
+                    None => return Err(McpError::invalid_params(format!(
+                        "Block reference '{}' not found in {}", block_ref, path
+                    ))),
                 }
             }
-        }
+            "frontmatter" => {
+                // Parse frontmatter and update the target field
+                if !existing.starts_with("---") {
+                    return Err(McpError::invalid_params("Note has no frontmatter"));
+                }
+                let fm_end = existing[3..].find("\n---").map(|i| i + 3 + 4); // +4 for "\n---"
+                match fm_end {
+                    Some(end) => {
+                        let fm_section = &existing[..end];
+                        let body = &existing[end..];
 
-        // Build new content
-        let final_pos = if insert_mode == "prepend" {
-            heading_idx + 1
-        } else {
-            insert_pos
+                        // Simple key: value replacement in frontmatter
+                        let mut fm_lines: Vec<String> = fm_section.lines().map(|s| s.to_string()).collect();
+                        let key_prefix = format!("{}:", target);
+                        let mut found = false;
+
+                        for line in fm_lines.iter_mut() {
+                            if line.trim_start().starts_with(&key_prefix) {
+                                match op.as_str() {
+                                    "replace" => *line = format!("{}: {}", target, content),
+                                    "append" => *line = format!("{} {}", line, content),
+                                    "prepend" => {
+                                        let val_start = line.find(':').unwrap() + 1;
+                                        let existing_val = line[val_start..].trim();
+                                        *line = format!("{}: {} {}", target, content, existing_val);
+                                    }
+                                    _ => unreachable!(),
+                                }
+                                found = true;
+                                break;
+                            }
+                        }
+
+                        if !found {
+                            // Insert new field before closing ---
+                            let last = fm_lines.len() - 1;
+                            fm_lines.insert(last, format!("{}: {}", target, content));
+                        }
+
+                        format!("{}{}", fm_lines.join("\n"), body)
+                    }
+                    None => return Err(McpError::invalid_params("Malformed frontmatter (missing closing ---)")),
+                }
+            }
+            _ => return Err(McpError::invalid_params(
+                format!("Invalid target_type '{}'. Valid: heading, block, frontmatter", target_type)
+            )),
         };
 
-        let mut new_lines: Vec<&str> = Vec::with_capacity(lines.len() + 10);
-        new_lines.extend_from_slice(&lines[..final_pos]);
-
-        // Ensure blank line before inserted content
-        if !new_lines.is_empty() && !new_lines.last().map_or(true, |l| l.trim().is_empty()) {
-            new_lines.push("");
-        }
-
-        for line in content.lines() {
-            new_lines.push(line);
-        }
-
-        // Ensure blank line after inserted content if there's more content
-        if final_pos < lines.len() && !content.ends_with('\n') {
-            new_lines.push("");
-        }
-
-        new_lines.extend_from_slice(&lines[final_pos..]);
-
-        let new_content = new_lines.join("\n");
         tools
             .write_file_with_mode(&path, &new_content, WriteMode::Overwrite)
             .await
@@ -2145,8 +2238,9 @@ impl ObsidianMcpServer {
             "patch_note",
             serde_json::json!({
                 "path": path,
-                "heading": heading,
-                "mode": insert_mode,
+                "target_type": target_type,
+                "target": target,
+                "operation": op,
                 "status": "patched"
             }),
         )
@@ -2240,22 +2334,29 @@ impl ObsidianMcpServer {
     /// Get recently modified files
     #[tool(
         description = "Get the most recently modified files in the vault, sorted by modification time (newest first)",
-        usage = "Use to see recent vault activity, find what was last edited, or orient yourself at session start. Limit defaults to 20",
+        usage = "Use to see recent vault activity, find what was last edited, or orient yourself at session start. Defaults: limit=10, days=90",
         performance = "Moderate — scans vault directory for file metadata",
         related = ["list_files", "read_note", "get_vault_context"],
-        examples = ["limit: 10", "limit: 50"]
+        examples = ["limit: 10, days: 1 (today's changes)", "limit: 50, days: 7 (this week)"]
     )]
     async fn get_recent_changes(
         &self,
         limit: Option<usize>,
+        days: Option<u64>,
     ) -> McpResult<serde_json::Value> {
         let (vault_name, manager) = self.get_vault_pair().await?;
         let vault_root = manager.vault_path().clone();
-        let max_results = limit.unwrap_or(20);
+        let max_results = limit.unwrap_or(10);
+        let max_age_secs = days.unwrap_or(90) * 86400;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let cutoff = now.saturating_sub(max_age_secs);
 
         let mut entries: Vec<(String, u64)> = Vec::new();
 
-        fn walk_dir(dir: &std::path::Path, vault_root: &std::path::Path, entries: &mut Vec<(String, u64)>) {
+        fn walk_dir(dir: &std::path::Path, vault_root: &std::path::Path, entries: &mut Vec<(String, u64)>, cutoff: u64) {
             if let Ok(read_dir) = std::fs::read_dir(dir) {
                 for entry in read_dir.flatten() {
                     let path = entry.path();
@@ -2266,22 +2367,24 @@ impl ObsidianMcpServer {
                     }
 
                     if path.is_dir() {
-                        walk_dir(&path, vault_root, entries);
+                        walk_dir(&path, vault_root, entries, cutoff);
                     } else if name.ends_with(".md") {
                         if let Ok(meta) = entry.metadata() {
                             let modified = meta.modified().ok()
                                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                                 .map(|d| d.as_secs())
                                 .unwrap_or(0);
-                            let rel_path = turbovault_tools::to_relative_path(&path, vault_root);
-                            entries.push((rel_path, modified));
+                            if modified >= cutoff {
+                                let rel_path = turbovault_tools::to_relative_path(&path, vault_root);
+                                entries.push((rel_path, modified));
+                            }
                         }
                     }
                 }
             }
         }
 
-        walk_dir(&vault_root, &vault_root, &mut entries);
+        walk_dir(&vault_root, &vault_root, &mut entries, cutoff);
 
         // Sort by modified time descending
         entries.sort_by(|a, b| b.1.cmp(&a.1));
@@ -2289,7 +2392,12 @@ impl ObsidianMcpServer {
 
         let results: Vec<serde_json::Value> = entries
             .into_iter()
-            .map(|(path, modified)| serde_json::json!({"path": path, "modified": modified}))
+            .map(|(path, modified)| {
+                let dt = chrono::DateTime::from_timestamp(modified as i64, 0)
+                    .map(|t| t.with_timezone(&chrono::Local).to_rfc3339())
+                    .unwrap_or_default();
+                serde_json::json!({"path": path, "modified": dt})
+            })
             .collect();
 
         let count = results.len();
