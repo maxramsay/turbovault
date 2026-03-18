@@ -41,6 +41,7 @@ impl GraphTools {
 
     /// Get detailed broken links information
     pub async fn get_broken_links(&self) -> Result<Vec<BrokenLinkInfo>> {
+        let vault_root = self.manager.vault_path();
         let graph_lock = self.manager.link_graph();
         let graph = graph_lock.read().await;
         let analyzer = HealthAnalyzer::new(&graph);
@@ -51,7 +52,7 @@ impl GraphTools {
             .broken_links
             .into_iter()
             .map(|bl| BrokenLinkInfo {
-                source_file: bl.source_file.to_string_lossy().to_string(),
+                source_file: crate::to_relative_path(&bl.source_file, vault_root),
                 target: bl.target,
                 line: bl.line,
                 suggestions: bl.suggestions,
@@ -101,6 +102,7 @@ impl GraphTools {
 
     /// Get hub notes (highly connected nodes)
     pub async fn get_hub_notes(&self, limit: usize) -> Result<Vec<(String, usize)>> {
+        let vault_root = self.manager.vault_path();
         let graph_lock = self.manager.link_graph();
         let graph = graph_lock.read().await;
         let analyzer = HealthAnalyzer::new(&graph);
@@ -111,12 +113,13 @@ impl GraphTools {
             .hub_notes
             .into_iter()
             .take(limit)
-            .map(|(path, count)| (path.to_string_lossy().to_string(), count))
+            .map(|(path, count)| (crate::to_relative_path(&path, vault_root), count))
             .collect())
     }
 
     /// Get dead-end notes (no outgoing links but have incoming)
     pub async fn get_dead_end_notes(&self) -> Result<Vec<String>> {
+        let vault_root = self.manager.vault_path();
         let graph_lock = self.manager.link_graph();
         let graph = graph_lock.read().await;
         let analyzer = HealthAnalyzer::new(&graph);
@@ -126,12 +129,13 @@ impl GraphTools {
         Ok(report
             .dead_end_notes
             .into_iter()
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| crate::to_relative_path(&p, vault_root))
             .collect())
     }
 
     /// Detect cycles in the graph
     pub async fn detect_cycles(&self) -> Result<Vec<Vec<String>>> {
+        let vault_root = self.manager.vault_path();
         let graph_lock = self.manager.link_graph();
         let graph = graph_lock.read().await;
         let cycles = graph.cycles();
@@ -141,7 +145,7 @@ impl GraphTools {
             .map(|cycle| {
                 cycle
                     .into_iter()
-                    .map(|p| p.to_string_lossy().to_string())
+                    .map(|p| crate::to_relative_path(&p, vault_root))
                     .collect()
             })
             .collect())
@@ -149,6 +153,7 @@ impl GraphTools {
 
     /// Get connected components
     pub async fn get_connected_components(&self) -> Result<Vec<Vec<String>>> {
+        let vault_root = self.manager.vault_path();
         let graph_lock = self.manager.link_graph();
         let graph = graph_lock.read().await;
         let components = graph.connected_components()?;
@@ -158,7 +163,7 @@ impl GraphTools {
             .map(|component| {
                 component
                     .into_iter()
-                    .map(|p| p.to_string_lossy().to_string())
+                    .map(|p| crate::to_relative_path(&p, vault_root))
                     .collect()
             })
             .collect())
@@ -166,6 +171,7 @@ impl GraphTools {
 
     /// Get isolated clusters (small disconnected groups)
     pub async fn get_isolated_clusters(&self) -> Result<Vec<Vec<String>>> {
+        let vault_root = self.manager.vault_path();
         let graph_lock = self.manager.link_graph();
         let graph = graph_lock.read().await;
         let analyzer = HealthAnalyzer::new(&graph);
@@ -178,7 +184,7 @@ impl GraphTools {
             .map(|cluster| {
                 cluster
                     .into_iter()
-                    .map(|p| p.to_string_lossy().to_string())
+                    .map(|p| crate::to_relative_path(&p, vault_root))
                     .collect()
             })
             .collect())

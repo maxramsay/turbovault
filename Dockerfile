@@ -10,15 +10,15 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-# Build server in release mode
-RUN cargo build --release --package turbovault-server
+# Build server in release mode with HTTP transport
+RUN cargo build --release --package turbovault --features http
 
 # Stage 2: Runtime
 FROM debian:bookworm-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
-    ca-certificates \
+    ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binary from builder
@@ -40,11 +40,12 @@ WORKDIR /var/obsidian-vault
 ENV RUST_LOG=info
 ENV OBSIDIAN_VAULT_PATH=/var/obsidian-vault
 
-# Health check
+# Expose HTTP port
+EXPOSE 3000
+
+# Health check via HTTP
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD /usr/local/bin/turbovault --help > /dev/null 2>&1 || exit 1
+    CMD curl -sf -X POST http://localhost:3000/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":0,"method":"ping"}' || exit 1
 
-# Run server with STDIO transport (MCP protocol - standard)
-# Can be mounted at runtime with: -v /path/to/vault:/var/obsidian-vault
-ENTRYPOINT ["/usr/local/bin/turbovault", "--profile", "production", "--init"]
-
+# Run server with HTTP transport, bind to all interfaces
+ENTRYPOINT ["/usr/local/bin/turbovault", "--profile", "production", "--init", "--transport", "http", "--bind", "0.0.0.0"]

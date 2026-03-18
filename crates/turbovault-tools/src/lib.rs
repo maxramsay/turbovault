@@ -196,3 +196,11 @@ pub use turbovault_batch::{BatchOperation, BatchResult};
 pub use turbovault_core::prelude::*;
 pub use validation_tools::{ValidationReportInfo, ValidationTools};
 pub use vault_lifecycle::VaultLifecycleTools;
+
+/// Strip the vault root prefix from an absolute path, returning a relative vault path.
+/// Falls back to the original path string if stripping fails.
+pub fn to_relative_path(path: &std::path::Path, vault_root: &std::path::Path) -> String {
+    path.strip_prefix(vault_root)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.to_string_lossy().to_string())
+}

@@ -29,6 +29,10 @@ struct Args {
     #[arg(long, default_value = "3000")]
     port: u16,
 
+    /// Bind address for network transports
+    #[arg(long, default_value = "0.0.0.0")]
+    bind: String,
+
     /// Output format for non-STDIO transports (json, human, text)
     /// Note: STDIO transport always uses JSON per MCP protocol specification
     #[arg(long, default_value = "json")]
@@ -284,7 +288,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         #[cfg(feature = "http")]
         "http" => {
-            let addr = format!("127.0.0.1:{}", args.port);
+            let addr = format!("{}:{}", args.bind, args.port);
             log::info!("Running HTTP server on {}", addr);
             log::info!("Output format: {:?}", output_format);
             // TODO: Apply output_format to HTTP responses
@@ -292,7 +296,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         #[cfg(feature = "websocket")]
         "websocket" => {
-            let addr = format!("127.0.0.1:{}", args.port);
+            let addr = format!("{}:{}", args.bind, args.port);
             log::info!("Running WebSocket server on {}", addr);
             log::info!("Output format: {:?}", output_format);
             // TODO: Apply output_format to WebSocket responses
@@ -300,7 +304,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         #[cfg(feature = "tcp")]
         "tcp" => {
-            let addr = format!("127.0.0.1:{}", args.port);
+            let addr = format!("{}:{}", args.bind, args.port);
             log::info!("Running TCP server on {}", addr);
             log::info!("Output format: {:?}", output_format);
             // TODO: Apply output_format to TCP responses

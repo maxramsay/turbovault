@@ -39,16 +39,18 @@ impl AnalysisTools {
 
     /// List all orphaned notes (no incoming or outgoing links)
     pub async fn list_orphaned_notes(&self) -> Result<Vec<String>> {
+        let vault_root = self.manager.vault_path();
         let orphans = self.manager.get_orphaned_notes().await?;
 
         Ok(orphans
             .into_iter()
-            .filter_map(|p| p.to_str().map(|s| s.to_string()))
+            .map(|p| crate::to_relative_path(&p, vault_root))
             .collect())
     }
 
     /// Detect cycles (mutual linking patterns)
     pub async fn detect_cycles(&self) -> Result<Vec<Vec<String>>> {
+        let vault_root = self.manager.vault_path();
         let graph = self.manager.link_graph();
         let graph_read = graph.read().await;
 
@@ -58,7 +60,7 @@ impl AnalysisTools {
             .map(|cycle| {
                 cycle
                     .into_iter()
-                    .filter_map(|p| p.to_str().map(|s| s.to_string()))
+                    .map(|p| crate::to_relative_path(&p, vault_root))
                     .collect()
             })
             .collect();

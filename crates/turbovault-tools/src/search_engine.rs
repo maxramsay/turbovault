@@ -151,7 +151,7 @@ impl SearchEngine {
 
             match manager.parse_file(&file_path).await {
                 Ok(vault_file) => {
-                    let path_str = file_path.to_string_lossy().to_string();
+                    let path_str = crate::to_relative_path(&file_path, manager.vault_path());
 
                     // Get title
                     let title = vault_file

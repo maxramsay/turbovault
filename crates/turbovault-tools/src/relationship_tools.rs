@@ -117,6 +117,7 @@ impl RelationshipTools {
 
     /// Suggest files to link from a given file
     pub async fn suggest_links(&self, file: &str, limit: usize) -> Result<Value> {
+        let vault_root = self.manager.vault_path();
         let graph = self.manager.link_graph();
         let read = graph.read().await;
 
@@ -127,7 +128,7 @@ impl RelationshipTools {
         let mut existing_links = std::collections::HashSet::new();
         if let Ok(forward_links) = read.forward_links(&file_path) {
             for (linked_file, _) in forward_links {
-                existing_links.insert(linked_file.to_string_lossy().to_string());
+                existing_links.insert(crate::to_relative_path(&linked_file, vault_root));
             }
         }
 
@@ -135,7 +136,7 @@ impl RelationshipTools {
         let mut suggestions: Vec<LinkSuggestion> = Vec::new();
 
         for candidate in all_files {
-            let candidate_str = candidate.to_string_lossy().to_string();
+            let candidate_str = crate::to_relative_path(&candidate, vault_root);
 
             // Skip self and existing links
             if candidate_str.contains(file) || existing_links.contains(&candidate_str) {
@@ -206,6 +207,7 @@ impl RelationshipTools {
 
     /// Get centrality ranking for all files
     pub async fn get_centrality_ranking(&self) -> Result<Value> {
+        let vault_root = self.manager.vault_path();
         let graph = self.manager.link_graph();
         let read = graph.read().await;
 
@@ -215,7 +217,7 @@ impl RelationshipTools {
         let mut rankings: Vec<(String, f64, HashMap<&str, f64>)> = Vec::new();
 
         for file in all_files {
-            let file_str = file.to_string_lossy().to_string();
+            let file_str = crate::to_relative_path(&file, vault_root);
 
             // Betweenness: count edges if this file connects two others
             let forward = read.forward_links(&file).unwrap_or_default().len() as f64;

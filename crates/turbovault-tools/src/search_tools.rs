@@ -19,33 +19,36 @@ impl SearchTools {
     /// Find all backlinks to a file
     pub async fn find_backlinks(&self, path: &str) -> Result<Vec<String>> {
         let file_path = PathBuf::from(path);
+        let vault_root = self.manager.vault_path();
         let backlinks = self.manager.get_backlinks(&file_path).await?;
 
         Ok(backlinks
             .into_iter()
-            .filter_map(|p| p.to_str().map(|s| s.to_string()))
+            .map(|p| crate::to_relative_path(&p, vault_root))
             .collect())
     }
 
     /// Find all forward links from a file
     pub async fn find_forward_links(&self, path: &str) -> Result<Vec<String>> {
         let file_path = PathBuf::from(path);
+        let vault_root = self.manager.vault_path();
         let forward_links = self.manager.get_forward_links(&file_path).await?;
 
         Ok(forward_links
             .into_iter()
-            .filter_map(|p| p.to_str().map(|s| s.to_string()))
+            .map(|p| crate::to_relative_path(&p, vault_root))
             .collect())
     }
 
     /// Find related notes within N hops
     pub async fn find_related_notes(&self, path: &str, max_hops: usize) -> Result<Vec<String>> {
         let file_path = PathBuf::from(path);
+        let vault_root = self.manager.vault_path();
         let related = self.manager.get_related_notes(&file_path, max_hops).await?;
 
         Ok(related
             .into_iter()
-            .filter_map(|p| p.to_str().map(|s| s.to_string()))
+            .map(|p| crate::to_relative_path(&p, vault_root))
             .collect())
     }
 
