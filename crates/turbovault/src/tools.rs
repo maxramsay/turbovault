@@ -14,6 +14,7 @@ use turbovault_tools::{
     RelationshipTools, SearchEngine, SearchQuery, SearchTools, TemplateEngine, VaultLifecycleTools,
     WriteMode, obsidian_uri,
 };
+use chrono::Datelike;
 use turbovault_vault::VaultManager;
 
 /// Helper to convert internal Error to McpError
@@ -1961,5 +1962,344 @@ impl ObsidianMcpServer {
                 "quick_ref_tool": "get_ofm_quick_ref"
             }
         }))
+    }
+
+    // ==================== Compatibility Tools (Obsidian MCP parity) ====================
+
+    /// Get a periodic note (daily, weekly, monthly)
+    #[tool(
+        description = "Get the periodic note for a given period type and optional date. Returns the note content if it exists, or indicates it doesn't exist yet",
+        usage = "Use to access daily notes, weekly notes, etc. Defaults to today/this week/this month if no date provided. Date format: YYYY-MM-DD",
+        performance = "Fast (<10ms)",
+        related = ["read_note", "write_note"],
+        examples = ["period: daily (today's note)", "period: daily, date: 2026-03-15", "period: weekly", "period: monthly"]
+    )]
+    async fn get_periodic_note(
+        &self,
+        period: String,
+        date: Option<String>,
+    ) -> McpResult<serde_json::Value> {
+        let (vault_name, manager) = self.get_vault_pair().await?;
+
+        let target_date = if let Some(date_str) = &date {
+            chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+                .map_err(|e| McpError::invalid_params(format!("Invalid date format (expected YYYY-MM-DD): {}", e)))?
+        } else {
+            chrono::Local::now().date_naive()
+        };
+
+        let path = match period.to_lowercase().as_str() {
+            "daily" => format!("Daily/{}.md", target_date.format("%Y-%m-%d")),
+            "weekly" => {
+                let iso_week = target_date.iso_week();
+                format!("Daily/{}-W{:02}.md", iso_week.year(), iso_week.week())
+            }
+            "monthly" => format!("Daily/{}.md", target_date.format("%Y-%m")),
+            "quarterly" => {
+                let quarter = (target_date.month() - 1) / 3 + 1;
+                format!("Daily/{}-Q{}.md", target_date.year(), quarter)
+            }
+            "yearly" => format!("Daily/{}.md", target_date.format("%Y")),
+            _ => return Err(McpError::invalid_params(
+                format!("Invalid period '{}'. Valid: daily, weekly, monthly, quarterly, yearly", period)
+            )),
+        };
+
+        let tools = FileTools::new(manager);
+        match tools.read_file(&path).await {
+            Ok(content) => {
+                StandardResponse::new(
+                    vault_name,
+                    "get_periodic_note",
+                    serde_json::json!({
+                        "path": path,
+                        "period": period,
+                        "date": target_date.format("%Y-%m-%d").to_string(),
+                        "exists": true,
+                        "content": content
+                    }),
+                )
+                .with_next_steps(&["write_note", "patch_note"])
+                .to_json()
+            }
+            Err(_) => {
+                StandardResponse::new(
+                    vault_name,
+                    "get_periodic_note",
+                    serde_json::json!({
+                        "path": path,
+                        "period": period,
+                        "date": target_date.format("%Y-%m-%d").to_string(),
+                        "exists": false,
+                        "content": null
+                    }),
+                )
+                .with_next_steps(&["write_note"])
+                .to_json()
+            }
+        }
+    }
+
+    /// Insert content under a specific heading
+    #[tool(
+        description = "Insert content under a specific heading in a note. Finds the heading and inserts content after it, before the next heading of the same or higher level",
+        usage = "Use for structured note editing — adding items under specific sections without replacing the whole file. Heading match is case-insensitive and ignores leading #. If heading is not found, returns an error with available headings",
+        performance = "Fast (<20ms)",
+        related = ["write_note", "edit_note", "read_note"],
+        examples = ["heading: '## Session Notes', content: '### New Session\\n...'", "heading: 'Actions', content: '- [ ] New task'"]
+    )]
+    async fn patch_note(
+        &self,
+        path: String,
+        heading: String,
+        content: String,
+        mode: Option<String>,
+    ) -> McpResult<serde_json::Value> {
+        let (vault_name, manager) = self.get_vault_pair().await?;
+        let tools = FileTools::new(manager);
+
+        let existing = tools.read_file(&path).await.map_err(to_mcp_error)?;
+        let lines: Vec<&str> = existing.lines().collect();
+
+        // Normalize the target heading (strip leading # and whitespace)
+        let target = heading.trim().trim_start_matches('#').trim();
+        let insert_mode = mode.as_deref().unwrap_or("append"); // append (after heading content) or prepend (right after heading line)
+
+        // Find the heading line
+        let mut heading_line_idx = None;
+        let mut heading_level = 0;
+        let mut available_headings: Vec<String> = Vec::new();
+
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') {
+                let level = trimmed.chars().take_while(|c| *c == '#').count();
+                let heading_text = trimmed.trim_start_matches('#').trim();
+                available_headings.push(trimmed.to_string());
+
+                if heading_text.eq_ignore_ascii_case(target) && heading_line_idx.is_none() {
+                    heading_line_idx = Some(i);
+                    heading_level = level;
+                }
+            }
+        }
+
+        let heading_idx = match heading_line_idx {
+            Some(idx) => idx,
+            None => {
+                return Err(McpError::invalid_params(format!(
+                    "Heading '{}' not found. Available headings: {}",
+                    heading,
+                    available_headings.join(", ")
+                )));
+            }
+        };
+
+        // Find the end of this section (next heading of same or higher level)
+        let mut insert_pos = lines.len(); // default: end of file
+        for i in (heading_idx + 1)..lines.len() {
+            let trimmed = lines[i].trim();
+            if trimmed.starts_with('#') {
+                let level = trimmed.chars().take_while(|c| *c == '#').count();
+                if level <= heading_level {
+                    insert_pos = i;
+                    break;
+                }
+            }
+        }
+
+        // Build new content
+        let final_pos = if insert_mode == "prepend" {
+            heading_idx + 1
+        } else {
+            insert_pos
+        };
+
+        let mut new_lines: Vec<&str> = Vec::with_capacity(lines.len() + 10);
+        new_lines.extend_from_slice(&lines[..final_pos]);
+
+        // Ensure blank line before inserted content
+        if !new_lines.is_empty() && !new_lines.last().map_or(true, |l| l.trim().is_empty()) {
+            new_lines.push("");
+        }
+
+        for line in content.lines() {
+            new_lines.push(line);
+        }
+
+        // Ensure blank line after inserted content if there's more content
+        if final_pos < lines.len() && !content.ends_with('\n') {
+            new_lines.push("");
+        }
+
+        new_lines.extend_from_slice(&lines[final_pos..]);
+
+        let new_content = new_lines.join("\n");
+        tools
+            .write_file_with_mode(&path, &new_content, WriteMode::Overwrite)
+            .await
+            .map_err(to_mcp_error)?;
+
+        StandardResponse::new(
+            vault_name,
+            "patch_note",
+            serde_json::json!({
+                "path": path,
+                "heading": heading,
+                "mode": insert_mode,
+                "status": "patched"
+            }),
+        )
+        .with_write_next_steps()
+        .to_json()
+    }
+
+    /// List files in a directory
+    #[tool(
+        description = "List files and subdirectories in a vault path. Returns file names, sizes, and modification times",
+        usage = "Use to explore vault structure, find files in a folder, or enumerate contents of a directory. Pass empty string or '/' for vault root",
+        performance = "Fast (<10ms for typical directories)",
+        related = ["read_note", "search", "get_vault_context"],
+        examples = ["path: 'Daily'", "path: 'Focus Areas/Projects'", "path: '' (vault root)"]
+    )]
+    async fn list_files(
+        &self,
+        path: Option<String>,
+    ) -> McpResult<serde_json::Value> {
+        let (vault_name, manager) = self.get_vault_pair().await?;
+        let vault_root = manager.vault_path().clone();
+        let target_dir = if let Some(ref p) = path {
+            if p.is_empty() || p == "/" {
+                vault_root.clone()
+            } else {
+                vault_root.join(p)
+            }
+        } else {
+            vault_root.clone()
+        };
+
+        if !target_dir.exists() {
+            return Err(McpError::invalid_params(format!(
+                "Directory not found: {}", path.unwrap_or_default()
+            )));
+        }
+
+        let mut files = Vec::new();
+        let mut dirs = Vec::new();
+
+        if let Ok(entries) = std::fs::read_dir(&target_dir) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+
+                // Skip hidden files/dirs
+                if name.starts_with('.') {
+                    continue;
+                }
+
+                if entry_path.is_dir() {
+                    dirs.push(serde_json::json!({"name": name, "type": "directory"}));
+                } else {
+                    let meta = entry.metadata().ok();
+                    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                    let modified = meta
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs());
+
+                    files.push(serde_json::json!({
+                        "name": name,
+                        "type": "file",
+                        "size": size,
+                        "modified": modified
+                    }));
+                }
+            }
+        }
+
+        dirs.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        files.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+
+        let display_path = path.unwrap_or_default();
+        let total = files.len() + dirs.len();
+
+        StandardResponse::new(
+            vault_name,
+            "list_files",
+            serde_json::json!({
+                "path": display_path,
+                "directories": dirs,
+                "files": files,
+            }),
+        )
+        .with_count(total)
+        .with_next_steps(&["read_note", "search"])
+        .to_json()
+    }
+
+    /// Get recently modified files
+    #[tool(
+        description = "Get the most recently modified files in the vault, sorted by modification time (newest first)",
+        usage = "Use to see recent vault activity, find what was last edited, or orient yourself at session start. Limit defaults to 20",
+        performance = "Moderate — scans vault directory for file metadata",
+        related = ["list_files", "read_note", "get_vault_context"],
+        examples = ["limit: 10", "limit: 50"]
+    )]
+    async fn get_recent_changes(
+        &self,
+        limit: Option<usize>,
+    ) -> McpResult<serde_json::Value> {
+        let (vault_name, manager) = self.get_vault_pair().await?;
+        let vault_root = manager.vault_path().clone();
+        let max_results = limit.unwrap_or(20);
+
+        let mut entries: Vec<(String, u64)> = Vec::new();
+
+        fn walk_dir(dir: &std::path::Path, vault_root: &std::path::Path, entries: &mut Vec<(String, u64)>) {
+            if let Ok(read_dir) = std::fs::read_dir(dir) {
+                for entry in read_dir.flatten() {
+                    let path = entry.path();
+                    let name = entry.file_name().to_string_lossy().to_string();
+
+                    if name.starts_with('.') {
+                        continue;
+                    }
+
+                    if path.is_dir() {
+                        walk_dir(&path, vault_root, entries);
+                    } else if name.ends_with(".md") {
+                        if let Ok(meta) = entry.metadata() {
+                            let modified = meta.modified().ok()
+                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+                            let rel_path = turbovault_tools::to_relative_path(&path, vault_root);
+                            entries.push((rel_path, modified));
+                        }
+                    }
+                }
+            }
+        }
+
+        walk_dir(&vault_root, &vault_root, &mut entries);
+
+        // Sort by modified time descending
+        entries.sort_by(|a, b| b.1.cmp(&a.1));
+        entries.truncate(max_results);
+
+        let results: Vec<serde_json::Value> = entries
+            .into_iter()
+            .map(|(path, modified)| serde_json::json!({"path": path, "modified": modified}))
+            .collect();
+
+        let count = results.len();
+        StandardResponse::new(
+            vault_name,
+            "get_recent_changes",
+            serde_json::json!({"files": results}),
+        )
+        .with_count(count)
+        .with_next_steps(&["read_note", "list_files"])
+        .to_json()
     }
 }

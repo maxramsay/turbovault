@@ -4551,6 +4551,7 @@ name = "turbovault"
 version = "1.2.8"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "config",
  "criterion",
