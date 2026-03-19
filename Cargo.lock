@@ -4567,7 +4567,9 @@ dependencies = [
  "tracing-subscriber",
  "turbomcp",
  "turbomcp-server",
+ "turbovault-batch",
  "turbovault-core",
+ "turbovault-parser",
  "turbovault-tools",
  "turbovault-vault",
 ]

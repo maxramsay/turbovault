@@ -74,6 +74,8 @@ tracing-subscriber = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tempfile = { workspace = true }
 criterion = { workspace = true, features = ["async_tokio", "html_reports"] }
+turbovault-batch = { workspace = true }
+turbovault-parser = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true
