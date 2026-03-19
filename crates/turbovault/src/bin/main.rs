@@ -291,8 +291,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let addr = format!("{}:{}", args.bind, args.port);
             log::info!("Running HTTP server on {}", addr);
             log::info!("Output format: {:?}", output_format);
-            // TODO: Apply output_format to HTTP responses
-            server.run_http(&addr).await?;
+
+            // Extract multi_vault before builder() consumes server
+            let multi_vault = server.multi_vault();
+
+            let rest_config = turbovault_rest::RestConfig {
+                api_token: std::env::var("VAULT_API_TOKEN").ok(),
+                protected_paths: std::env::var("VAULT_PROTECTED_PATHS")
+                    .unwrap_or_default()
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect(),
+            };
+            let rest_router = turbovault_rest::router(multi_vault, rest_config);
+
+            // builder() consumes server via McpServerExt
+            use turbomcp::McpServerExt;
+            let mcp_router = server.builder().into_axum_router();
+
+            // Merge both routers — REST routes take priority (matched first)
+            let app = mcp_router.merge(rest_router);
+
+            let listener = tokio::net::TcpListener::bind(&addr).await?;
+            log::info!("Serving MCP + REST API on {}", addr);
+            axum::serve(listener, app).await?;
         }
         #[cfg(feature = "websocket")]
         "websocket" => {

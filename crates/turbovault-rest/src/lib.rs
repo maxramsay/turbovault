@@ -4,6 +4,7 @@ pub mod errors;
 pub mod pagination;
 pub mod response;
 pub mod state;
+pub mod v1;
 pub mod vault_resolver;
 
 use axum::Router;
@@ -22,5 +23,5 @@ pub fn router(multi_vault: Arc<MultiVaultManager>, config: RestConfig) -> Router
         vault_managers: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     };
 
-    Router::new().with_state(state)
+    v1::routes(state.clone()).with_state(state)
 }
