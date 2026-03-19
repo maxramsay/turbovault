@@ -3,6 +3,7 @@ use axum::{Router, middleware, routing::{get, post}};
 use crate::auth::auth_middleware;
 use crate::state::AppState;
 
+pub mod batch;
 pub mod files;
 pub mod health;
 pub mod links;
@@ -27,6 +28,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/v1/recent", get(recent::get_recent))
         .route("/v1/backlinks/{*path}", get(links::backlinks))
         .route("/v1/forward-links/{*path}", get(links::forward_links))
+        .route("/v1/batch/read", post(batch::batch_read))
         .layer(middleware::from_fn_with_state(state, auth_middleware));
 
     let public = Router::new()
