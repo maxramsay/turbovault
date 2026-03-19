@@ -45,7 +45,7 @@ EXPOSE 3000
 
 # Health check via HTTP
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -sf -X POST http://localhost:3000/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":0,"method":"ping"}' || exit 1
+    CMD curl -sf http://localhost:3000/v1/health || exit 1
 
 # Run server with HTTP transport, bind to all interfaces
 ENTRYPOINT ["/usr/local/bin/turbovault", "--profile", "production", "--init", "--transport", "http", "--bind", "0.0.0.0"]
