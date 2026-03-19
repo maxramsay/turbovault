@@ -2073,13 +2073,21 @@ impl ObsidianMcpServer {
                 let lines: Vec<&str> = existing.lines().collect();
                 let target_heading = target.trim().trim_start_matches('#').trim();
 
-                // Find the heading line
+                // Find the heading line (skip headings inside fenced code blocks)
                 let mut heading_line_idx = None;
                 let mut heading_level = 0;
                 let mut available_headings: Vec<String> = Vec::new();
+                let mut in_code_block = false;
 
                 for (i, line) in lines.iter().enumerate() {
                     let trimmed = line.trim();
+                    if trimmed.starts_with("```") {
+                        in_code_block = !in_code_block;
+                        continue;
+                    }
+                    if in_code_block {
+                        continue;
+                    }
                     if trimmed.starts_with('#') {
                         let level = trimmed.chars().take_while(|c| *c == '#').count();
                         let heading_text = trimmed.trim_start_matches('#').trim();
@@ -2102,10 +2110,18 @@ impl ObsidianMcpServer {
                     }
                 };
 
-                // Find the end of this section
+                // Find the end of this section (skip headings inside fenced code blocks)
                 let mut section_end = lines.len();
+                let mut in_code_block_end = false;
                 for i in (heading_idx + 1)..lines.len() {
                     let trimmed = lines[i].trim();
+                    if trimmed.starts_with("```") {
+                        in_code_block_end = !in_code_block_end;
+                        continue;
+                    }
+                    if in_code_block_end {
+                        continue;
+                    }
                     if trimmed.starts_with('#') {
                         let level = trimmed.chars().take_while(|c| *c == '#').count();
                         if level <= heading_level {
