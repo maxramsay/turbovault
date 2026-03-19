@@ -22,6 +22,7 @@ turbovault-core = { path = "../turbovault-core" }
 turbovault-tools = { path = "../turbovault-tools" }
 turbovault-vault = { path = "../turbovault-vault" }
 turbovault-graph = { path = "../turbovault-graph" }
+walkdir = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
