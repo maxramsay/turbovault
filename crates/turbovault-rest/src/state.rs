@@ -1,5 +1,8 @@
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use turbovault_core::prelude::MultiVaultManager;
+use turbovault_vault::VaultManager;
 
 /// Configuration for the REST API
 #[derive(Clone, Debug)]
@@ -16,4 +19,6 @@ pub struct AppState {
     pub multi_vault: Arc<MultiVaultManager>,
     pub config: RestConfig,
     pub start_time: std::time::Instant,
+    /// Cache of initialized VaultManagers keyed by vault name
+    pub vault_managers: Arc<RwLock<HashMap<String, Arc<VaultManager>>>>,
 }

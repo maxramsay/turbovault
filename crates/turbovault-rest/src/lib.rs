@@ -1,7 +1,10 @@
+pub mod auth;
+pub mod content;
 pub mod errors;
 pub mod pagination;
 pub mod response;
 pub mod state;
+pub mod vault_resolver;
 
 use axum::Router;
 use state::AppState;
@@ -16,6 +19,7 @@ pub fn router(multi_vault: Arc<MultiVaultManager>, config: RestConfig) -> Router
         multi_vault,
         config,
         start_time: std::time::Instant::now(),
+        vault_managers: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     };
 
     Router::new().with_state(state)
