@@ -6,6 +6,112 @@ use http_body_util::BodyExt;
 use serde_json::json;
 use tower::ServiceExt;
 
+// ---------------------------------------------------------------------------
+// If-Match tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_put_with_matching_if_match_succeeds() {
+    let (app, _tmp) = helpers::test_app(None).await;
+
+    // GET the existing note to obtain its current hash
+    let get_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/notes/test.md")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(get_response.status(), StatusCode::OK);
+
+    let body = get_response.into_body().collect().await.unwrap().to_bytes();
+    let get_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let hash = get_json["data"]["hash"].as_str().unwrap().to_string();
+
+    // PUT with the correct If-Match hash — should succeed
+    let put_response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/notes/test.md")
+                .header("Content-Type", "application/json")
+                .header("If-Match", &hash)
+                .body(Body::from(
+                    serde_json::to_string(&json!({"content": "# Updated\nNew content\n"})).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(put_response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_put_with_stale_if_match_fails() {
+    let (app, _tmp) = helpers::test_app(None).await;
+
+    // GET note to obtain its current hash
+    let get_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/notes/test.md")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = get_response.into_body().collect().await.unwrap().to_bytes();
+    let get_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let old_hash = get_json["data"]["hash"].as_str().unwrap().to_string();
+
+    // PUT without If-Match to change the content (and therefore the hash)
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/notes/test.md")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({"content": "# Changed\nDifferent content\n"}))
+                        .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // PUT again with the OLD hash — should return 409 HASH_MISMATCH
+    let stale_response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/notes/test.md")
+                .header("Content-Type", "application/json")
+                .header("If-Match", &old_hash)
+                .body(Body::from(
+                    serde_json::to_string(&json!({"content": "# Conflict\nShould fail\n"}))
+                        .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(stale_response.status(), StatusCode::CONFLICT);
+
+    let body = stale_response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"]["code"], "HASH_MISMATCH");
+}
+
 #[tokio::test]
 async fn test_read_existing_note() {
     let (app, _tmp) = helpers::test_app(None).await;

@@ -8,14 +8,53 @@ use axum::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::path::Path as FsPath;
 use std::time::{SystemTime, UNIX_EPOCH};
 use turbovault_tools::file_tools::{FileTools, WriteMode};
 
 use crate::{
-    content, errors::ApiError, response::ApiResponse, state::AppState,
+    content, errors::ApiError, response::ApiResponse, state::{AppState, RestConfig},
     trash_manifest::{TrashEntry, TrashManifest},
     vault_resolver::resolve_vault,
 };
+
+/// Return `Err(ApiError::Forbidden)` if `path` starts with any protected prefix.
+fn check_protected_path(path: &str, config: &RestConfig) -> Result<(), ApiError> {
+    for protected in &config.protected_paths {
+        if path.starts_with(protected.as_str()) {
+            return Err(ApiError::Forbidden(format!("Path is protected: {}", protected)));
+        }
+    }
+    Ok(())
+}
+
+/// Return `Err(ApiError::HashMismatch)` if an `If-Match` header is present and
+/// does not match the SHA-256 of the file's current content.
+///
+/// Returns `Err(ApiError::NotFound)` if the header is present but the file does
+/// not exist (can't validate a hash against nothing).
+async fn check_if_match(
+    headers: &HeaderMap,
+    vault_path: &FsPath,
+    note_path: &str,
+) -> Result<(), ApiError> {
+    if let Some(expected_hash_val) = headers.get("If-Match") {
+        let expected_hash = expected_hash_val
+            .to_str()
+            .unwrap_or("")
+            .trim_matches('"'); // strip optional surrounding quotes
+
+        let current_content = std::fs::read_to_string(vault_path.join(note_path))
+            .map_err(|_| ApiError::NotFound(note_path.to_string()))?;
+
+        let current_hash = format!("{:x}", Sha256::digest(current_content.as_bytes()));
+
+        if expected_hash != current_hash {
+            return Err(ApiError::HashMismatch);
+        }
+    }
+    Ok(())
+}
 
 #[derive(Serialize)]
 pub struct NoteData {
@@ -85,7 +124,12 @@ pub async fn create_note(
     Path(path): Path<String>,
     body: Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
+    check_protected_path(&path, &state.config)?;
+
     let (vault_name, manager) = resolve_vault(&state, &headers).await?;
+
+    let vault_path = manager.vault_path().to_path_buf();
+    check_if_match(&headers, &vault_path, &path).await?;
 
     let note_content = content::extract_note_content(&headers, body)?;
 
@@ -128,7 +172,12 @@ pub async fn patch_note(
     Query(query): Query<HashMap<String, String>>,
     body: Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
+    check_protected_path(&path, &state.config)?;
+
     let (vault_name, manager) = resolve_vault(&state, &headers).await?;
+
+    let vault_path = manager.vault_path().to_path_buf();
+    check_if_match(&headers, &vault_path, &path).await?;
 
     let tools = FileTools::new(manager.clone());
 
@@ -388,7 +437,12 @@ pub async fn append_note(
     Path(path): Path<String>,
     body: Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
+    check_protected_path(&path, &state.config)?;
+
     let (vault_name, manager) = resolve_vault(&state, &headers).await?;
+
+    let vault_path = manager.vault_path().to_path_buf();
+    check_if_match(&headers, &vault_path, &path).await?;
 
     let tools = FileTools::new(manager.clone());
 
@@ -449,8 +503,12 @@ pub async fn delete_note(
     headers: HeaderMap,
     Path(path): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
+    check_protected_path(&path, &state.config)?;
+
     let (vault_name, manager) = resolve_vault(&state, &headers).await?;
     let vault_path = manager.vault_path();
+
+    check_if_match(&headers, vault_path, &path).await?;
 
     let full_path = vault_path.join(&path);
     if !full_path.exists() {
