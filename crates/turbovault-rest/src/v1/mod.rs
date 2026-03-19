@@ -9,7 +9,7 @@ pub mod notes_info;
 
 pub fn routes(state: AppState) -> Router<AppState> {
     let protected = Router::new()
-        .route("/v1/notes/{*path}", get(notes::read_note))
+        .route("/v1/notes/{*path}", get(notes::read_note).put(notes::create_note).post(notes::append_note))
         .route("/v1/notes-info/{*path}", get(notes_info::get_info))
         .layer(middleware::from_fn_with_state(state, auth_middleware));
 

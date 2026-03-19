@@ -3,6 +3,7 @@ mod helpers;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
+use serde_json::json;
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -133,4 +134,217 @@ async fn test_notes_info_nonexistent() {
 
     assert_eq!(json["success"], false);
     assert_eq!(json["error"]["code"], "NOT_FOUND");
+}
+
+#[tokio::test]
+async fn test_put_creates_new_note() {
+    let (app, _tmp) = helpers::test_app(None).await;
+
+    let put_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/notes/Staging/new-note.md")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({"content": "# New Note\nCreated via PUT\n"})).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(put_response.status(), StatusCode::OK);
+
+    let body = put_response.into_body().collect().await.unwrap().to_bytes();
+    let put_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(put_json["success"], true);
+    assert_eq!(put_json["data"]["path"], "Staging/new-note.md");
+    assert_eq!(put_json["data"]["status"], "created");
+    assert!(put_json["data"]["hash"].as_str().is_some());
+
+    // GET the note back and verify content
+    let get_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/notes/Staging/new-note.md")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(get_response.status(), StatusCode::OK);
+
+    let body = get_response.into_body().collect().await.unwrap().to_bytes();
+    let get_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert!(get_json["data"]["content"]
+        .as_str()
+        .unwrap()
+        .contains("# New Note"));
+}
+
+#[tokio::test]
+async fn test_put_overwrites_existing_note() {
+    let (app, _tmp) = helpers::test_app(None).await;
+
+    let put_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/notes/test.md")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({"content": "# Overwritten\nNew content only\n"})).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(put_response.status(), StatusCode::OK);
+
+    let body = put_response.into_body().collect().await.unwrap().to_bytes();
+    let put_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(put_json["success"], true);
+    assert_eq!(put_json["data"]["status"], "overwritten");
+
+    // GET back and verify old content is gone, new content present
+    let get_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/notes/test.md")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = get_response.into_body().collect().await.unwrap().to_bytes();
+    let get_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let content = get_json["data"]["content"].as_str().unwrap();
+
+    assert!(content.contains("Overwritten"), "new content should be present");
+    assert!(!content.contains("Hello world"), "old content should be gone");
+}
+
+#[tokio::test]
+async fn test_post_appends_to_existing_note() {
+    let (app, _tmp) = helpers::test_app(None).await;
+
+    let post_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/notes/test.md")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({"content": "\n\nAppended text"})).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(post_response.status(), StatusCode::OK);
+
+    let body = post_response.into_body().collect().await.unwrap().to_bytes();
+    let post_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(post_json["success"], true);
+    assert_eq!(post_json["data"]["status"], "appended");
+
+    // GET and confirm both original and appended content are present
+    let get_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/notes/test.md")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = get_response.into_body().collect().await.unwrap().to_bytes();
+    let get_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let content = get_json["data"]["content"].as_str().unwrap();
+
+    assert!(content.contains("Hello world"), "original content should still be present");
+    assert!(content.contains("Appended text"), "appended content should be present");
+}
+
+#[tokio::test]
+async fn test_post_to_nonexistent_returns_404() {
+    let (app, _tmp) = helpers::test_app(None).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/notes/does-not-exist.md")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&json!({"content": "some text"})).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["success"], false);
+    assert_eq!(json["error"]["code"], "NOT_FOUND");
+}
+
+#[tokio::test]
+async fn test_put_with_text_markdown_content_type() {
+    let (app, _tmp) = helpers::test_app(None).await;
+
+    let put_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/notes/markdown-test.md")
+                .header("Content-Type", "text/markdown")
+                .body(Body::from("# Markdown PUT\nRaw markdown body\n"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(put_response.status(), StatusCode::OK);
+
+    let body = put_response.into_body().collect().await.unwrap().to_bytes();
+    let put_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(put_json["success"], true);
+    assert_eq!(put_json["data"]["status"], "created");
+
+    // GET back and verify
+    let get_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/notes/markdown-test.md")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = get_response.into_body().collect().await.unwrap().to_bytes();
+    let get_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let content = get_json["data"]["content"].as_str().unwrap();
+
+    assert!(content.contains("Raw markdown body"));
 }
