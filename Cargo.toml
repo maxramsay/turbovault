@@ -8,6 +8,7 @@ members = [
     "crates/turbovault-export",
     "crates/turbovault-tools",
     "crates/turbovault",
+    "crates/turbovault-rest",
 ]
 resolver = "2"
 
@@ -102,6 +103,7 @@ turbovault-batch = { version = "1.2.8", path = "crates/turbovault-batch" }
 turbovault-export = { version = "1.2.8", path = "crates/turbovault-export" }
 turbovault-tools = { version = "1.2.8", path = "crates/turbovault-tools" }
 turbovault = { version = "1.2.8", path = "crates/turbovault" }
+turbovault-rest = { version = "1.2.8", path = "crates/turbovault-rest" }
 
 [profile.release]
 opt-level = 3

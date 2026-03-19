@@ -4551,6 +4551,7 @@ name = "turbovault"
 version = "1.2.8"
 dependencies = [
  "anyhow",
+ "axum",
  "chrono",
  "clap",
  "config",
@@ -4570,6 +4571,7 @@ dependencies = [
  "turbovault-batch",
  "turbovault-core",
  "turbovault-parser",
+ "turbovault-rest",
  "turbovault-tools",
  "turbovault-vault",
 ]
@@ -4645,6 +4647,29 @@ dependencies = [
  "serde_yaml",
  "tokio",
  "turbovault-core",
+]
+
+[[package]]
+name = "turbovault-rest"
+version = "1.2.8"
+dependencies = [
+ "axum",
+ "chrono",
+ "http-body-util",
+ "log",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tower",
+ "tower-http",
+ "turbovault-core",
+ "turbovault-graph",
+ "turbovault-tools",
+ "turbovault-vault",
+ "walkdir",
 ]
 
 [[package]]

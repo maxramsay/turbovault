@@ -31,7 +31,7 @@ default = []
 
 # Individual transports - add what you need
 stdio = []                                    # Always included, no external deps
-http = ["turbomcp/http"]                     # Add HTTP server support (~200 KB)
+http = ["turbomcp/http", "dep:turbovault-rest", "dep:axum"]  # Add HTTP server support + REST API
 websocket = ["turbomcp/websocket"]           # Add WebSocket support (~200 KB)
 tcp = ["turbomcp/tcp"]                       # Add TCP server support (~100 KB)
 unix = ["turbomcp/unix"]                     # Add Unix socket support (~100 KB) [Unix-only]
@@ -56,6 +56,8 @@ turbovault-tools = { workspace = true }
 turbomcp = { version = "3.0.0", features = ["telemetry"] }
 turbomcp-server = { version = "3.0.0" }
 
+turbovault-rest = { path = "../turbovault-rest", optional = true }
+axum = { version = "0.8", optional = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
