@@ -1,12 +1,13 @@
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue},
     response::IntoResponse,
     Json,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use turbovault_tools::file_tools::{FileTools, WriteMode};
 
 use crate::{content, errors::ApiError, response::ApiResponse, state::AppState, vault_resolver::resolve_vault};
@@ -22,6 +23,15 @@ pub struct NoteData {
 pub struct WriteData {
     pub path: String,
     pub hash: String,
+    pub status: String,
+}
+
+#[derive(Serialize)]
+pub struct PatchData {
+    pub path: String,
+    pub target_type: String,
+    pub target: String,
+    pub operation: String,
     pub status: String,
 }
 
@@ -104,6 +114,267 @@ pub async fn create_note(
     );
 
     Ok((response_headers, Json(response_body)))
+}
+
+pub async fn patch_note(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+    body: Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    let (vault_name, manager) = resolve_vault(&state, &headers).await?;
+
+    let tools = FileTools::new(manager.clone());
+
+    // PATCH requires the note to already exist
+    let existing = tools.read_file(&path).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("not found") || msg.contains("No such file") {
+            ApiError::NotFound(format!("Note not found: {}", path))
+        } else {
+            ApiError::Internal(format!("Failed to read note: {}", msg))
+        }
+    })?;
+
+    let patch_req = content::extract_patch_request(
+        &headers,
+        body,
+        query.get("target_type").map(|s| s.as_str()),
+        query.get("target").map(|s| s.as_str()),
+        query.get("operation").map(|s| s.as_str()),
+    )?;
+
+    let target_type = patch_req.target_type;
+    let target = patch_req.target;
+    let content_to_insert = patch_req.content;
+
+    let op = match patch_req.operation.to_lowercase().as_str() {
+        "append" | "prepend" | "replace" => patch_req.operation.to_lowercase(),
+        _ => {
+            return Err(ApiError::InvalidRequest(format!(
+                "Invalid operation '{}'. Valid: append, prepend, replace",
+                patch_req.operation
+            )))
+        }
+    };
+
+    let new_content = match target_type.to_lowercase().as_str() {
+        "heading" => {
+            let lines: Vec<&str> = existing.lines().collect();
+            let target_heading = target.trim().trim_start_matches('#').trim();
+
+            let mut heading_line_idx = None;
+            let mut heading_level = 0;
+            let mut available_headings: Vec<String> = Vec::new();
+            let mut in_code_block = false;
+
+            for (i, line) in lines.iter().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("```") {
+                    in_code_block = !in_code_block;
+                    continue;
+                }
+                if in_code_block {
+                    continue;
+                }
+                if trimmed.starts_with('#') {
+                    let level = trimmed.chars().take_while(|c| *c == '#').count();
+                    let heading_text = trimmed.trim_start_matches('#').trim();
+                    available_headings.push(trimmed.to_string());
+                    if heading_text.eq_ignore_ascii_case(target_heading) && heading_line_idx.is_none() {
+                        heading_line_idx = Some(i);
+                        heading_level = level;
+                    }
+                }
+            }
+
+            let heading_idx = match heading_line_idx {
+                Some(idx) => idx,
+                None => {
+                    return Err(ApiError::InvalidRequest(format!(
+                        "Heading '{}' not found. Available headings: {}",
+                        target,
+                        available_headings.join(", ")
+                    )));
+                }
+            };
+
+            let mut section_end = lines.len();
+            let mut in_code_block_end = false;
+            for i in (heading_idx + 1)..lines.len() {
+                let trimmed = lines[i].trim();
+                if trimmed.starts_with("```") {
+                    in_code_block_end = !in_code_block_end;
+                    continue;
+                }
+                if in_code_block_end {
+                    continue;
+                }
+                if trimmed.starts_with('#') {
+                    let level = trimmed.chars().take_while(|c| *c == '#').count();
+                    if level <= heading_level {
+                        section_end = i;
+                        break;
+                    }
+                }
+            }
+
+            let mut new_lines: Vec<String> = Vec::with_capacity(lines.len() + 10);
+            match op.as_str() {
+                "prepend" => {
+                    new_lines.extend(lines[..=heading_idx].iter().map(|s| s.to_string()));
+                    new_lines.push(String::new());
+                    for line in content_to_insert.lines() {
+                        new_lines.push(line.to_string());
+                    }
+                    new_lines.extend(lines[heading_idx + 1..].iter().map(|s| s.to_string()));
+                }
+                "append" => {
+                    new_lines.extend(lines[..section_end].iter().map(|s| s.to_string()));
+                    if !new_lines.last().map_or(true, |l| l.trim().is_empty()) {
+                        new_lines.push(String::new());
+                    }
+                    for line in content_to_insert.lines() {
+                        new_lines.push(line.to_string());
+                    }
+                    if section_end < lines.len() {
+                        new_lines.push(String::new());
+                    }
+                    new_lines.extend(lines[section_end..].iter().map(|s| s.to_string()));
+                }
+                "replace" => {
+                    new_lines.extend(lines[..=heading_idx].iter().map(|s| s.to_string()));
+                    new_lines.push(String::new());
+                    for line in content_to_insert.lines() {
+                        new_lines.push(line.to_string());
+                    }
+                    if section_end < lines.len() {
+                        new_lines.push(String::new());
+                    }
+                    new_lines.extend(lines[section_end..].iter().map(|s| s.to_string()));
+                }
+                _ => unreachable!(),
+            }
+            new_lines.join("\n")
+        }
+        "block" => {
+            let block_ref = if target.starts_with('^') {
+                target.clone()
+            } else {
+                format!("^{}", target)
+            };
+            let lines: Vec<&str> = existing.lines().collect();
+            let block_idx = lines.iter().position(|line| line.contains(&block_ref));
+            match block_idx {
+                Some(idx) => {
+                    let mut new_lines: Vec<String> = Vec::with_capacity(lines.len() + 5);
+                    match op.as_str() {
+                        "prepend" => {
+                            new_lines.extend(lines[..idx].iter().map(|s| s.to_string()));
+                            for line in content_to_insert.lines() {
+                                new_lines.push(line.to_string());
+                            }
+                            new_lines.extend(lines[idx..].iter().map(|s| s.to_string()));
+                        }
+                        "append" => {
+                            new_lines.extend(lines[..=idx].iter().map(|s| s.to_string()));
+                            for line in content_to_insert.lines() {
+                                new_lines.push(line.to_string());
+                            }
+                            new_lines.extend(lines[idx + 1..].iter().map(|s| s.to_string()));
+                        }
+                        "replace" => {
+                            new_lines.extend(lines[..idx].iter().map(|s| s.to_string()));
+                            for line in content_to_insert.lines() {
+                                new_lines.push(line.to_string());
+                            }
+                            new_lines.extend(lines[idx + 1..].iter().map(|s| s.to_string()));
+                        }
+                        _ => unreachable!(),
+                    }
+                    new_lines.join("\n")
+                }
+                None => {
+                    return Err(ApiError::InvalidRequest(format!(
+                        "Block reference '{}' not found in {}",
+                        block_ref, path
+                    )))
+                }
+            }
+        }
+        "frontmatter" => {
+            if !existing.starts_with("---") {
+                return Err(ApiError::InvalidRequest("Note has no frontmatter".into()));
+            }
+            let fm_end = existing[3..].find("\n---").map(|i| i + 3 + 4);
+            match fm_end {
+                Some(end) => {
+                    let fm_section = &existing[..end];
+                    let body_str = &existing[end..];
+                    let mut fm_lines: Vec<String> =
+                        fm_section.lines().map(|s| s.to_string()).collect();
+                    let key_prefix = format!("{}:", target);
+                    let mut found = false;
+                    for line in fm_lines.iter_mut() {
+                        if line.trim_start().starts_with(&key_prefix) {
+                            match op.as_str() {
+                                "replace" => *line = format!("{}: {}", target, content_to_insert),
+                                "append" => *line = format!("{} {}", line, content_to_insert),
+                                "prepend" => {
+                                    let val_start = line.find(':').unwrap() + 1;
+                                    let existing_val = line[val_start..].trim();
+                                    *line = format!(
+                                        "{}: {} {}",
+                                        target, content_to_insert, existing_val
+                                    );
+                                }
+                                _ => unreachable!(),
+                            }
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        let last = fm_lines.len() - 1;
+                        fm_lines
+                            .insert(last, format!("{}: {}", target, content_to_insert));
+                    }
+                    format!("{}{}", fm_lines.join("\n"), body_str)
+                }
+                None => {
+                    return Err(ApiError::InvalidRequest(
+                        "Malformed frontmatter (missing closing ---)".into(),
+                    ))
+                }
+            }
+        }
+        _ => {
+            return Err(ApiError::InvalidRequest(format!(
+                "Invalid target_type '{}'. Valid: heading, block, frontmatter",
+                target_type
+            )))
+        }
+    };
+
+    tools
+        .write_file_with_mode(&path, &new_content, WriteMode::Overwrite)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to write patched note: {}", e)))?;
+
+    let response_body = ApiResponse::new(
+        &vault_name,
+        "patch_note",
+        PatchData {
+            path: path.clone(),
+            target_type,
+            target,
+            operation: op,
+            status: "patched".to_string(),
+        },
+    );
+
+    Ok(Json(response_body))
 }
 
 pub async fn append_note(
