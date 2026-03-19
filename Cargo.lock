@@ -4669,6 +4669,7 @@ dependencies = [
  "turbovault-graph",
  "turbovault-tools",
  "turbovault-vault",
+ "walkdir",
 ]
 
 [[package]]
