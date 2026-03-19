@@ -8,9 +8,14 @@ use axum::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 use turbovault_tools::file_tools::{FileTools, WriteMode};
 
-use crate::{content, errors::ApiError, response::ApiResponse, state::AppState, vault_resolver::resolve_vault};
+use crate::{
+    content, errors::ApiError, response::ApiResponse, state::AppState,
+    trash_manifest::{TrashEntry, TrashManifest},
+    vault_resolver::resolve_vault,
+};
 
 #[derive(Serialize)]
 pub struct NoteData {
@@ -429,4 +434,82 @@ pub async fn append_note(
     );
 
     Ok((response_headers, Json(response_body)))
+}
+
+#[derive(Serialize)]
+pub struct DeleteData {
+    pub original_path: String,
+    pub moved_to: String,
+    pub orphaned_links: Vec<String>,
+    pub restorable: bool,
+}
+
+pub async fn delete_note(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let (vault_name, manager) = resolve_vault(&state, &headers).await?;
+    let vault_path = manager.vault_path();
+
+    let full_path = vault_path.join(&path);
+    if !full_path.exists() {
+        return Err(ApiError::NotFound(format!("Note not found: {}", path)));
+    }
+
+    // TODO: Compute orphaned links by scanning for backlinks.
+    // Graph initialization per-request is expensive; returning empty list for now.
+    let orphaned_links: Vec<String> = Vec::new();
+
+    // Build trash path: {original-path}.{unix_timestamp}
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let trash_relative = format!("{}.{}", path, timestamp);
+
+    let trash_dest = vault_path.join(".trash").join(&trash_relative);
+
+    // Create parent directories in .trash/ as needed
+    if let Some(parent) = trash_dest.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| ApiError::Internal(format!("Failed to create trash directory: {}", e)))?;
+    }
+
+    // Move file to trash
+    tokio::fs::rename(&full_path, &trash_dest)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to move file to trash: {}", e)))?;
+
+    // Update manifest
+    let mut manifest = TrashManifest::load(vault_path)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to load trash manifest: {}", e)))?;
+
+    let entry = TrashEntry {
+        original_path: path.clone(),
+        trash_path: trash_relative.clone(),
+        deleted_at: chrono::Utc::now().to_rfc3339(),
+        orphaned_links: orphaned_links.clone(),
+        permanent_delete_requested: None,
+    };
+
+    manifest
+        .add_entry(entry, vault_path)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to save trash manifest: {}", e)))?;
+
+    let response = ApiResponse::new(
+        &vault_name,
+        "delete_note",
+        DeleteData {
+            original_path: path,
+            moved_to: trash_relative,
+            orphaned_links,
+            restorable: true,
+        },
+    );
+
+    Ok(Json(response))
 }

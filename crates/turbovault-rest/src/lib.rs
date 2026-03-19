@@ -4,6 +4,7 @@ pub mod errors;
 pub mod pagination;
 pub mod response;
 pub mod state;
+pub mod trash_manifest;
 pub mod v1;
 pub mod vault_resolver;
 
