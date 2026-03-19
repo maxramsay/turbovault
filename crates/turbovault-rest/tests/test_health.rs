@@ -27,8 +27,8 @@ async fn test_health_returns_200() {
     assert_eq!(json["success"], true);
     assert_eq!(json["data"]["status"], "ok");
     assert!(json["data"]["uptime_seconds"].is_number());
-    // We created 3 .md files in the temp vault
-    assert_eq!(json["data"]["note_count"], 3);
+    // We created 6 .md files in the temp vault (3 original + 3 notes/ for link tests)
+    assert_eq!(json["data"]["note_count"], 6);
     assert_eq!(json["data"]["vault_name"], "default");
 }
 

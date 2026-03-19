@@ -20,6 +20,16 @@ pub async fn test_app(api_token: Option<String>) -> (axum::Router, tempfile::Tem
     .unwrap();
     std::fs::write(vault_path.join("another.md"), "# Another\nMore content\n").unwrap();
 
+    // Create notes with wikilinks for link graph tests
+    std::fs::create_dir_all(vault_path.join("notes")).unwrap();
+    std::fs::write(
+        vault_path.join("notes/A.md"),
+        "# A\n\nLinks to [[B]] and [[C]]\n",
+    )
+    .unwrap();
+    std::fs::write(vault_path.join("notes/B.md"), "# B\n\nLinks to [[A]]\n").unwrap();
+    std::fs::write(vault_path.join("notes/C.md"), "# C\n\nNo outgoing links\n").unwrap();
+
     // Build MultiVaultManager with the temp vault
     let server_config = ServerConfig::new();
     let manager = MultiVaultManager::empty(server_config).expect("failed to create manager");

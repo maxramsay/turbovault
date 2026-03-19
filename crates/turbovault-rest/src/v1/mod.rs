@@ -5,6 +5,7 @@ use crate::state::AppState;
 
 pub mod files;
 pub mod health;
+pub mod links;
 pub mod notes;
 pub mod notes_info;
 pub mod periodic;
@@ -24,6 +25,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/v1/files/{*path}", get(files::list_dir))
         .route("/v1/periodic/{period}", get(periodic::get_periodic))
         .route("/v1/recent", get(recent::get_recent))
+        .route("/v1/backlinks/{*path}", get(links::backlinks))
+        .route("/v1/forward-links/{*path}", get(links::forward_links))
         .layer(middleware::from_fn_with_state(state, auth_middleware));
 
     let public = Router::new()
