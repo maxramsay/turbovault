@@ -87,6 +87,7 @@ pub mod validation;
 pub mod event_publisher;
 pub mod event_queue;
 pub mod events;
+pub mod snapshot;
 pub mod versioning;
 
 pub use config::*;
