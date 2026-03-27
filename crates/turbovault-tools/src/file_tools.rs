@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use tokio::io::AsyncReadExt;
 use turbovault_core::prelude::*;
+use turbovault_core::versioning::{apply_version_create, apply_version_update, NoteVersionInfo};
 use turbovault_vault::VaultManager;
 
 /// Write mode for write_file operations
@@ -201,6 +202,52 @@ impl FileTools {
             .map_err(Error::io)?;
 
         Ok(())
+    }
+
+    /// Write a note with version enforcement.
+    /// For new files: creates with version 1.
+    /// For existing files: requires expected_version to match current.
+    pub async fn write_note_versioned(
+        &self,
+        path: &str,
+        content: &str,
+        expected_version: Option<u64>,
+        actor: &str,
+    ) -> Result<(String, NoteVersionInfo)> {
+        let file_path = self.manager.resolve_path(&PathBuf::from(path))?;
+
+        if file_path.exists() {
+            // Existing file: expected_version is required
+            let expected_version = expected_version.ok_or_else(|| {
+                Error::validation_error(
+                    "expected_version is required when updating an existing note",
+                )
+            })?;
+
+            let current_content = tokio::fs::read_to_string(&file_path)
+                .await
+                .map_err(Error::io)?;
+
+            match apply_version_update(&current_content, content, expected_version, actor) {
+                Ok((versioned_content, info)) => {
+                    self.manager
+                        .write_file(&PathBuf::from(path), &versioned_content)
+                        .await?;
+                    Ok((versioned_content, info))
+                }
+                Err(conflict) => Err(Error::concurrency_error(format!(
+                    "version conflict: expected {}, actual {}",
+                    conflict.expected, conflict.actual
+                ))),
+            }
+        } else {
+            // New file: create with version 1
+            let (versioned_content, info) = apply_version_create(content, actor);
+            self.manager
+                .write_file(&PathBuf::from(path), &versioned_content)
+                .await?;
+            Ok((versioned_content, info))
+        }
     }
 
     /// Get lightweight metadata for multiple files without reading full content
