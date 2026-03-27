@@ -8,6 +8,8 @@ use tokio::sync::RwLock;
 use turbomcp::prelude::*;
 use turbovault_core::ServerConfig;
 use turbovault_core::error::Error;
+use turbovault_core::event_publisher::VaultEventPublisher;
+use turbovault_core::events::*;
 use turbovault_core::prelude::MultiVaultManager;
 use turbovault_tools::{
     AnalysisTools, BatchOperation, BatchTools, ExportTools, FileTools, GraphTools, MetadataTools,
@@ -154,6 +156,8 @@ pub struct ObsidianMcpServer {
     vault_managers: Arc<RwLock<HashMap<String, Arc<VaultManager>>>>,
     /// Cache for persisting vault state across server restarts (project-aware)
     persistent_cache: Arc<RwLock<Option<turbovault_core::cache::VaultCache>>>,
+    /// Event publisher for vault activity events (NATS with disk-backed fallback)
+    publisher: Arc<VaultEventPublisher>,
 }
 
 impl ObsidianMcpServer {
@@ -168,6 +172,7 @@ impl ObsidianMcpServer {
             multi_vault_mgr: Arc::new(mgr),
             vault_managers: Arc::new(RwLock::new(HashMap::new())),
             persistent_cache: Arc::new(RwLock::new(None)),
+            publisher: Arc::new(VaultEventPublisher::noop()),
         })
     }
 
@@ -177,6 +182,12 @@ impl ObsidianMcpServer {
         let mut cache_lock = self.persistent_cache.write().await;
         *cache_lock = Some(cache);
         Ok(())
+    }
+
+    /// Set the event publisher (builder pattern).
+    pub fn with_publisher(mut self, publisher: Arc<VaultEventPublisher>) -> Self {
+        self.publisher = publisher;
+        self
     }
 
     /// Get the multi-vault manager
@@ -397,6 +408,11 @@ impl ObsidianMcpServer {
         let hash = turbovault_vault::compute_hash(&content);
 
         let uri = obsidian_uri(&vault_name, &path);
+
+        self.publisher
+            .emit("vault.note.read", &NoteReadEvent { path: path.clone() })
+            .await;
+
         StandardResponse::new(
             &vault_name,
             "read_note",
@@ -429,6 +445,17 @@ impl ObsidianMcpServer {
             .map_err(to_mcp_error)?;
 
         let mode_str = mode.as_deref().unwrap_or("overwrite");
+
+        self.publisher
+            .emit(
+                "vault.note.created",
+                &NoteCreatedEvent {
+                    path: path.clone(),
+                    size_bytes: content.len(),
+                },
+            )
+            .await;
+
         StandardResponse::new(
             vault_name,
             "write_note",
@@ -460,6 +487,17 @@ impl ObsidianMcpServer {
             .edit_file(&path, &edits, expected_hash.as_deref(), dry_run)
             .await
             .map_err(to_mcp_error)?;
+
+        self.publisher
+            .emit(
+                "vault.note.updated",
+                &NoteUpdatedEvent {
+                    path: path.clone(),
+                    version: 0,
+                    size_bytes: 0,
+                },
+            )
+            .await;
 
         StandardResponse::new(
             vault_name,
@@ -495,6 +533,13 @@ impl ObsidianMcpServer {
         let tools = FileTools::new(manager);
         tools.delete_file(&path).await.map_err(to_mcp_error)?;
 
+        self.publisher
+            .emit(
+                "vault.note.deleted",
+                &NoteDeletedEvent { path: path.clone() },
+            )
+            .await;
+
         StandardResponse::new(
             vault_name,
             "delete_note",
@@ -516,6 +561,16 @@ impl ObsidianMcpServer {
         let (vault_name, manager) = self.get_vault_pair().await?;
         let tools = FileTools::new(manager);
         tools.move_file(&from, &to).await.map_err(to_mcp_error)?;
+
+        self.publisher
+            .emit(
+                "vault.note.moved",
+                &NoteMovedEvent {
+                    from_path: from.clone(),
+                    to_path: to.clone(),
+                },
+            )
+            .await;
 
         StandardResponse::new(
             vault_name,
@@ -543,6 +598,18 @@ impl ObsidianMcpServer {
         let backlinks = tools.find_backlinks(&path).await.map_err(to_mcp_error)?;
 
         let count = backlinks.len();
+
+        self.publisher
+            .emit(
+                "vault.note.links",
+                &LinksEvent {
+                    path: path.clone(),
+                    direction: "backward".to_string(),
+                    result_count: count,
+                },
+            )
+            .await;
+
         let response =
             StandardResponse::new(vault_name, "get_backlinks", serde_json::json!(backlinks))
                 .with_count(count)
@@ -945,6 +1012,16 @@ impl ObsidianMcpServer {
         let result_data =
             serde_json::to_value(&results).map_err(|e| McpError::internal(e.to_string()))?;
         let count = extract_count(&result_data);
+
+        self.publisher
+            .emit(
+                "vault.note.search",
+                &SearchEvent {
+                    query: query.clone(),
+                    result_count: count,
+                },
+            )
+            .await;
 
         let response = StandardResponse::new(vault_name, "search", result_data)
             .with_count(count)
@@ -2332,6 +2409,16 @@ impl ObsidianMcpServer {
 
         let display_path = path.unwrap_or_default();
         let total = files.len() + dirs.len();
+
+        self.publisher
+            .emit(
+                "vault.note.list",
+                &ListEvent {
+                    directory: display_path.clone(),
+                    result_count: total,
+                },
+            )
+            .await;
 
         StandardResponse::new(
             vault_name,
