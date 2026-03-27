@@ -12,6 +12,7 @@ pub mod notes_info;
 pub mod periodic;
 pub mod recent;
 pub mod search;
+pub mod snapshots;
 pub mod trash;
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -29,6 +30,9 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/v1/backlinks/{*path}", get(links::backlinks))
         .route("/v1/forward-links/{*path}", get(links::forward_links))
         .route("/v1/batch/read", post(batch::batch_read))
+        .route("/v1/snapshots", post(snapshots::create_snapshot).get(snapshots::list_snapshots))
+        .route("/v1/snapshots/{id}", get(snapshots::get_snapshot).delete(snapshots::delete_snapshot))
+        .route("/v1/snapshots/{id}/restore", post(snapshots::restore_snapshot))
         .layer(middleware::from_fn_with_state(state, auth_middleware));
 
     let public = Router::new()
