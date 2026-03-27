@@ -11,17 +11,23 @@ pub mod vault_resolver;
 use axum::Router;
 use state::AppState;
 use std::sync::Arc;
+use turbovault_core::event_publisher::VaultEventPublisher;
 use turbovault_core::prelude::MultiVaultManager;
 
 pub use state::RestConfig;
 
 /// Build the REST API router. Merge with MCP router in main.rs.
-pub fn router(multi_vault: Arc<MultiVaultManager>, config: RestConfig) -> Router {
+pub fn router(
+    multi_vault: Arc<MultiVaultManager>,
+    config: RestConfig,
+    publisher: Arc<VaultEventPublisher>,
+) -> Router {
     let state = AppState {
         multi_vault,
         config,
         start_time: std::time::Instant::now(),
         vault_managers: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        publisher,
     };
 
     v1::routes(state.clone()).with_state(state)

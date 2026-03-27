@@ -6,6 +6,8 @@ use axum::{
 };
 use serde::Serialize;
 
+use turbovault_core::events::LinksEvent;
+
 use crate::{errors::ApiError, response::ApiResponse, state::AppState, vault_resolver::resolve_vault};
 
 #[derive(Serialize)]
@@ -39,6 +41,20 @@ pub async fn backlinks(
         .collect();
 
     let count = links.len();
+
+    // Fire-and-forget event emission
+    state
+        .publisher
+        .emit(
+            "vault.note.links",
+            &LinksEvent {
+                path: path.clone(),
+                direction: "backward".to_string(),
+                result_count: count,
+            },
+        )
+        .await;
+
     let response = ApiResponse::new(&vault_name, "backlinks", LinksData { path, links, count })
         .with_count(count);
 
@@ -69,6 +85,20 @@ pub async fn forward_links(
         .collect();
 
     let count = links.len();
+
+    // Fire-and-forget event emission
+    state
+        .publisher
+        .emit(
+            "vault.note.links",
+            &LinksEvent {
+                path: path.clone(),
+                direction: "forward".to_string(),
+                result_count: count,
+            },
+        )
+        .await;
+
     let response = ApiResponse::new(&vault_name, "forward_links", LinksData { path, links, count })
         .with_count(count);
 

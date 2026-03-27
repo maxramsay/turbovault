@@ -7,6 +7,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::time::UNIX_EPOCH;
 
+use turbovault_core::events::ListEvent;
+
 use crate::{errors::ApiError, response::ApiResponse, state::AppState, vault_resolver::resolve_vault};
 
 #[derive(Deserialize)]
@@ -107,6 +109,18 @@ pub async fn list_root(
 
     let count = entries.len();
 
+    // Fire-and-forget event emission
+    state
+        .publisher
+        .emit(
+            "vault.note.list",
+            &ListEvent {
+                directory: "/".to_string(),
+                result_count: total,
+            },
+        )
+        .await;
+
     let response = ApiResponse::new(&vault_name, "list_files", entries)
         .with_count(count)
         .with_has_more(has_more);
@@ -157,6 +171,18 @@ pub async fn list_dir(
         .collect();
 
     let count = entries.len();
+
+    // Fire-and-forget event emission
+    state
+        .publisher
+        .emit(
+            "vault.note.list",
+            &ListEvent {
+                directory: clean_path.to_string(),
+                result_count: total,
+            },
+        )
+        .await;
 
     let response = ApiResponse::new(&vault_name, "list_files", entries)
         .with_count(count)

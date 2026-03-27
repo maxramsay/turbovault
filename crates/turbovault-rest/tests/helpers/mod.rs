@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use turbovault_core::event_publisher::VaultEventPublisher;
 use turbovault_core::prelude::{MultiVaultManager, ServerConfig, VaultConfig};
 use turbovault_rest::{RestConfig, router};
 
@@ -53,6 +54,7 @@ pub async fn test_app(api_token: Option<String>) -> (axum::Router, tempfile::Tem
 /// Create a test REST router with a fully custom [`RestConfig`].
 pub async fn test_app_with_config(config: RestConfig) -> (axum::Router, tempfile::TempDir) {
     let (tmp, manager) = build_temp_vault().await;
-    let app = router(manager, config);
+    let publisher = Arc::new(VaultEventPublisher::noop());
+    let app = router(manager, config, publisher);
     (app, tmp)
 }

@@ -12,6 +12,8 @@ use std::path::Path as FsPath;
 use std::time::{SystemTime, UNIX_EPOCH};
 use turbovault_tools::file_tools::{FileTools, WriteMode};
 
+use turbovault_core::events::*;
+
 use crate::{
     content, errors::ApiError, response::ApiResponse, state::{AppState, RestConfig},
     trash_manifest::{TrashEntry, TrashManifest},
@@ -99,6 +101,12 @@ pub async fn read_note(
     // Compute SHA-256 hash
     let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
 
+    // Fire-and-forget event emission
+    state
+        .publisher
+        .emit("vault.note.read", &NoteReadEvent { path: path.clone() })
+        .await;
+
     let response_body = ApiResponse::new(
         &vault_name,
         "read_note",
@@ -145,6 +153,18 @@ pub async fn create_note(
 
     let hash = format!("{:x}", Sha256::digest(note_content.content.as_bytes()));
     let status = if file_exists { "overwritten" } else { "created" }.to_string();
+
+    // Fire-and-forget event emission
+    state
+        .publisher
+        .emit(
+            "vault.note.created",
+            &NoteCreatedEvent {
+                path: path.clone(),
+                size_bytes: note_content.content.len(),
+            },
+        )
+        .await;
 
     let response_body = ApiResponse::new(
         &vault_name,
@@ -416,6 +436,19 @@ pub async fn patch_note(
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to write patched note: {}", e)))?;
 
+    // Fire-and-forget event emission
+    state
+        .publisher
+        .emit(
+            "vault.note.updated",
+            &NoteUpdatedEvent {
+                path: path.clone(),
+                version: 0,
+                size_bytes: new_content.len(),
+            },
+        )
+        .await;
+
     let response_body = ApiResponse::new(
         &vault_name,
         "patch_note",
@@ -470,6 +503,19 @@ pub async fn append_note(
         .map_err(|e| ApiError::Internal(format!("Failed to read note after append: {}", e)))?;
 
     let hash = format!("{:x}", Sha256::digest(full_content.as_bytes()));
+
+    // Fire-and-forget event emission
+    state
+        .publisher
+        .emit(
+            "vault.note.updated",
+            &NoteUpdatedEvent {
+                path: path.clone(),
+                version: 0,
+                size_bytes: full_content.len(),
+            },
+        )
+        .await;
 
     let response_body = ApiResponse::new(
         &vault_name,
@@ -557,6 +603,15 @@ pub async fn delete_note(
         .add_entry(entry, vault_path)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to save trash manifest: {}", e)))?;
+
+    // Fire-and-forget event emission
+    state
+        .publisher
+        .emit(
+            "vault.note.deleted",
+            &NoteDeletedEvent { path: path.clone() },
+        )
+        .await;
 
     let response = ApiResponse::new(
         &vault_name,

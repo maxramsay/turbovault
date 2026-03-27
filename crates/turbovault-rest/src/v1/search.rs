@@ -7,6 +7,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use turbovault_tools::search_engine::SearchEngine;
 
+use turbovault_core::events::SearchEvent;
+
 use crate::{errors::ApiError, response::ApiResponse, state::AppState, vault_resolver::resolve_vault};
 
 #[derive(Deserialize)]
@@ -69,6 +71,18 @@ pub async fn search(
         .collect();
 
     let count = results.len();
+
+    // Fire-and-forget event emission
+    state
+        .publisher
+        .emit(
+            "vault.note.search",
+            &SearchEvent {
+                query: query.clone(),
+                result_count: total,
+            },
+        )
+        .await;
 
     let response = ApiResponse::new(&vault_name, "search", results)
         .with_count(count)

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use turbovault_core::event_publisher::VaultEventPublisher;
 use turbovault_core::prelude::MultiVaultManager;
 use turbovault_vault::VaultManager;
 
@@ -21,4 +22,6 @@ pub struct AppState {
     pub start_time: std::time::Instant,
     /// Cache of initialized VaultManagers keyed by vault name
     pub vault_managers: Arc<RwLock<HashMap<String, Arc<VaultManager>>>>,
+    /// Event publisher for emitting vault activity events
+    pub publisher: Arc<VaultEventPublisher>,
 }

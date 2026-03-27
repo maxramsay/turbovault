@@ -304,7 +304,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .map(String::from)
                     .collect(),
             };
-            let rest_router = turbovault_rest::router(multi_vault, rest_config);
+            let publisher = std::sync::Arc::new(
+                turbovault_core::event_publisher::VaultEventPublisher::noop(),
+            );
+            let rest_router = turbovault_rest::router(multi_vault, rest_config, publisher);
 
             // builder() consumes server via McpServerExt
             use turbomcp::McpServerExt;
