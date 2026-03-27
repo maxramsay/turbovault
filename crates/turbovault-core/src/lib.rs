@@ -84,6 +84,9 @@ pub mod profiles;
 pub mod resilience;
 pub mod utils;
 pub mod validation;
+pub mod event_publisher;
+pub mod event_queue;
+pub mod events;
 pub mod versioning;
 
 pub use config::*;
