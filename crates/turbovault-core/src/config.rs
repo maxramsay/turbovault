@@ -166,6 +166,16 @@ pub struct ServerConfig {
     // Admin
     pub metrics_enabled: bool,
     pub debug_mode: bool,
+
+    // FC integration
+    /// NATS server URL for activity stream (optional — vault works without it)
+    pub nats_url: Option<String>,
+    /// FC Organization ID
+    pub org_id: String,
+    /// Default snapshot target directory
+    pub default_snapshot_target: String,
+    /// Directory for event queue persistence
+    pub event_queue_dir: String,
 }
 
 impl Default for ServerConfig {
@@ -202,6 +212,10 @@ impl Default for ServerConfig {
             multi_vault_enabled: false,
             metrics_enabled: false,
             debug_mode: false,
+            nats_url: None,
+            org_id: "default".to_string(),
+            default_snapshot_target: "/tmp/vault-snapshots".to_string(),
+            event_queue_dir: "/tmp/fc-vault".to_string(),
         }
     }
 }

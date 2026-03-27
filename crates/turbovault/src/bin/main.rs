@@ -41,6 +41,22 @@ struct Args {
     /// Initialize vault on startup (scan and build graph)
     #[arg(long, action = clap::ArgAction::SetTrue)]
     init: bool,
+
+    /// NATS server URL for activity stream
+    #[arg(long, env = "NATS_URL")]
+    nats_url: Option<String>,
+
+    /// FC Organization ID
+    #[arg(long, env = "FC_ORG_ID", default_value = "default")]
+    org_id: String,
+
+    /// Default snapshot target directory
+    #[arg(long, env = "FC_SNAPSHOT_TARGET", default_value = "/tmp/vault-snapshots")]
+    snapshot_target: String,
+
+    /// Directory for event queue persistence
+    #[arg(long, env = "FC_VAULT_DATA_DIR", default_value = "/tmp/fc-vault")]
+    data_dir: String,
 }
 
 #[tokio::main]
@@ -278,6 +294,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Available tools: add_vault, list_vaults, set_active_vault");
     }
 
+    // --- FC event infrastructure ---
+    use std::sync::Arc;
+    use turbovault_core::event_publisher::VaultEventPublisher;
+    use turbovault_core::event_queue::LocalEventQueue;
+
+    // Create event queue directory
+    let data_dir = std::path::PathBuf::from(&args.data_dir);
+    tokio::fs::create_dir_all(&data_dir).await.ok();
+
+    // Connect to NATS (optional — vault works without it)
+    let nats_client = if let Some(ref url) = args.nats_url {
+        match async_nats::connect(url).await {
+            Ok(client) => {
+                log::info!("Connected to NATS at {}", url);
+                Some(client)
+            }
+            Err(e) => {
+                log::warn!("Failed to connect to NATS at {}: {}. Events will queue locally.", url, e);
+                None
+            }
+        }
+    } else {
+        log::info!("NATS_URL not set. Events will queue locally.");
+        None
+    };
+
+    let event_queue = Arc::new(LocalEventQueue::new(&data_dir));
+    let publisher = Arc::new(VaultEventPublisher::new(nats_client, event_queue.clone(), args.org_id.clone()));
+
+    // Background task: drain local event queue every 30s
+    let drain_publisher = publisher.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            drain_publisher.drain_queue().await;
+        }
+    });
+
+    // Attach publisher to MCP server
+    let server = server.with_publisher(publisher.clone());
+
     // Start server with appropriate transport
     log::info!("Starting TurboVault Server");
 
@@ -304,10 +361,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .map(String::from)
                     .collect(),
             };
-            let publisher = std::sync::Arc::new(
-                turbovault_core::event_publisher::VaultEventPublisher::noop(),
-            );
-            let rest_router = turbovault_rest::router(multi_vault, rest_config, publisher);
+            let rest_router = turbovault_rest::router(multi_vault, rest_config, publisher.clone());
 
             // builder() consumes server via McpServerExt
             use turbomcp::McpServerExt;

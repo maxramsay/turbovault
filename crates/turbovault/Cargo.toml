@@ -65,6 +65,7 @@ serde_yaml = { workspace = true }
 config = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
+async-nats = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 simple_logger = "5.0"
