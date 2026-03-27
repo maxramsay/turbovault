@@ -42,9 +42,16 @@ struct Args {
     #[arg(long, action = clap::ArgAction::SetTrue)]
     init: bool,
 
-    /// NATS server URL for activity stream
+    /// NATS server URL for activity stream.
+    /// Accepts nats:// or fc:// scheme (fc:// is normalized to nats://).
+    /// FC_MESSAGES_URL takes precedence over NATS_URL for FC deployment consistency.
     #[arg(long, env = "NATS_URL")]
     nats_url: Option<String>,
+
+    /// FC Messages URL (alternative to NATS_URL, takes precedence).
+    /// Used by fleet unseal to pass the standard FC service URL.
+    #[arg(long, env = "FC_MESSAGES_URL", hide = true)]
+    fc_messages_url: Option<String>,
 
     /// FC Organization ID
     #[arg(long, env = "FC_ORG_ID", default_value = "default")]
@@ -304,19 +311,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::fs::create_dir_all(&data_dir).await.ok();
 
     // Connect to NATS (optional — vault works without it)
-    let nats_client = if let Some(ref url) = args.nats_url {
-        match async_nats::connect(url).await {
+    // FC_MESSAGES_URL takes precedence over NATS_URL (fleet unseal convention)
+    let nats_url = args.fc_messages_url.or(args.nats_url);
+    let nats_client = if let Some(ref url) = nats_url {
+        // Normalize fc:// to nats:// (FC convention)
+        let normalized = if url.starts_with("fc://") {
+            url.replacen("fc://", "nats://", 1)
+        } else {
+            url.clone()
+        };
+        match async_nats::connect(&normalized).await {
             Ok(client) => {
-                log::info!("Connected to NATS at {}", url);
+                log::info!("Connected to NATS at {} (normalized: {})", url, normalized);
                 Some(client)
             }
             Err(e) => {
-                log::warn!("Failed to connect to NATS at {}: {}. Events will queue locally.", url, e);
+                log::warn!("Failed to connect to NATS at {}: {}. Events will queue locally.", normalized, e);
                 None
             }
         }
     } else {
-        log::info!("NATS_URL not set. Events will queue locally.");
+        log::info!("No NATS URL configured. Events will queue locally.");
         None
     };
 
