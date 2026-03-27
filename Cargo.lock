@@ -4007,6 +4007,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tar"
+version = "0.4.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22692a6476a21fa75fdfc11d452fda482af402c008cdbaf3476414e122040973"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4990,12 +5001,16 @@ version = "1.2.8"
 dependencies = [
  "anyhow",
  "chrono",
+ "flate2",
  "log",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "shellexpand",
  "tantivy",
+ "tar",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -5008,6 +5023,7 @@ dependencies = [
  "turbovault-parser",
  "turbovault-vault",
  "urlencoding",
+ "walkdir",
 ]
 
 [[package]]
@@ -5725,6 +5741,16 @@ name = "writeable"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix 1.1.2",
+]
 
 [[package]]
 name = "yaml-rust2"

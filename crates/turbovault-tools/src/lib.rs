@@ -179,6 +179,7 @@ pub mod search_engine;
 pub mod search_tools;
 pub mod templates;
 pub mod validation_tools;
+pub mod snapshot_tools;
 pub mod vault_lifecycle;
 
 pub use analysis_tools::{AnalysisTools, VaultStats};
@@ -195,6 +196,7 @@ pub use templates::{TemplateDefinition, TemplateEngine, TemplateFieldType};
 pub use turbovault_batch::{BatchOperation, BatchResult};
 pub use turbovault_core::prelude::*;
 pub use validation_tools::{ValidationReportInfo, ValidationTools};
+pub use snapshot_tools::{SnapshotError, SnapshotTools};
 pub use vault_lifecycle::VaultLifecycleTools;
 
 /// Strip the vault root prefix from an absolute path, returning a relative vault path.

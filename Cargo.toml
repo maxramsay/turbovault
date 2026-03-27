@@ -86,6 +86,8 @@ tantivy = "0.22"           # Full-text search engine (Apache Lucene-inspired, pr
 similar = { version = "2.7", features = ["inline"] }  # mitsuhiko's diff lib (used by insta)
 strsim = "0.11"           # Levenshtein distance for fuzzy matching (if similar insufficient)
 sha2 = "0.10"             # SHA-256 hashing for content validation
+flate2 = "1.1"            # Gzip compression for snapshot archives
+tar = "0.4"               # Tar archive creation/extraction for snapshots
 unicode-normalization = "0.1.6"  # Unicode NFC normalization
 
 # Path handling & Security
