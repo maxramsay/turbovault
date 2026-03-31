@@ -1,7 +1,7 @@
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
-    http::{HeaderMap, HeaderValue},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
     Json,
 };
@@ -86,6 +86,8 @@ pub async fn read_note(
     headers: HeaderMap,
     Path(path): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
+    check_protected_path(&path, &state.config)?;
+
     let (vault_name, manager) = resolve_vault(&state, &headers).await?;
 
     let tools = FileTools::new(manager);
@@ -152,7 +154,8 @@ pub async fn create_note(
         .map_err(|e| ApiError::Internal(format!("Failed to write note: {}", e)))?;
 
     let hash = format!("{:x}", Sha256::digest(note_content.content.as_bytes()));
-    let status = if file_exists { "overwritten" } else { "created" }.to_string();
+    let is_new = !file_exists;
+    let status = if is_new { "created" } else { "overwritten" }.to_string();
 
     // Fire-and-forget event emission
     state
@@ -165,6 +168,12 @@ pub async fn create_note(
             },
         )
         .await;
+
+    let status_code = if is_new {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
 
     let response_body = ApiResponse::new(
         &vault_name,
@@ -182,7 +191,7 @@ pub async fn create_note(
         HeaderValue::from_str(&hash).unwrap_or_else(|_| HeaderValue::from_static("")),
     );
 
-    Ok((response_headers, Json(response_body)))
+    Ok((status_code, response_headers, Json(response_body)))
 }
 
 pub async fn patch_note(

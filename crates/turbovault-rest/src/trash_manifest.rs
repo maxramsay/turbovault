@@ -85,4 +85,18 @@ impl TrashManifest {
             false
         }
     }
+
+    /// Look up an entry by original_path (most recent if multiple deletions).
+    pub fn find_entry_by_original_path(&self, original_path: &str) -> Option<&TrashEntry> {
+        self.entries.iter().rev().find(|e| e.original_path == original_path)
+    }
+
+    /// Remove an entry by original_path (most recent), returning the removed entry.
+    pub fn remove_entry_by_original_path(&mut self, original_path: &str) -> Option<TrashEntry> {
+        let idx = self
+            .entries
+            .iter()
+            .rposition(|e| e.original_path == original_path)?;
+        Some(self.entries.remove(idx))
+    }
 }

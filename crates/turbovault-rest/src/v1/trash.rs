@@ -97,10 +97,12 @@ pub async fn restore(
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to load trash manifest: {}", e)))?;
 
-    // Find and remove entry
-    let entry = manifest.remove_entry(&trash_path).ok_or_else(|| {
-        ApiError::NotFound(format!("Trash entry not found: {}", trash_path))
-    })?;
+    // Find entry by trash_path first, then fall back to original_path
+    let entry = manifest.remove_entry(&trash_path)
+        .or_else(|| manifest.remove_entry_by_original_path(&trash_path))
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("Trash entry not found: {}", trash_path))
+        })?;
 
     let trash_file = vault_path.join(".trash").join(&entry.trash_path);
     let restore_target = vault_path.join(&entry.original_path);
@@ -158,22 +160,20 @@ pub async fn request_purge(
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to load trash manifest: {}", e)))?;
 
-    // Verify entry exists
-    if manifest.find_entry(&trash_path).is_none() {
-        return Err(ApiError::NotFound(format!(
-            "Trash entry not found: {}",
-            trash_path
-        )));
-    }
+    // Verify entry exists (by trash_path or original_path)
+    let effective_key = manifest.find_entry(&trash_path)
+        .map(|e| e.trash_path.clone())
+        .or_else(|| manifest.find_entry_by_original_path(&trash_path).map(|e| e.trash_path.clone()))
+        .ok_or_else(|| ApiError::NotFound(format!("Trash entry not found: {}", trash_path)))?;
 
-    if !manifest.mark_purge_requested(&trash_path) {
+    if !manifest.mark_purge_requested(&effective_key) {
         return Err(ApiError::Internal(
             "Failed to mark purge request".into(),
         ));
     }
 
     // Re-read the entry for the response
-    let entry = manifest.find_entry(&trash_path).unwrap();
+    let entry = manifest.find_entry(&effective_key).unwrap();
     let requested_at = entry.permanent_delete_requested.clone().unwrap();
     let original_path = entry.original_path.clone();
 
