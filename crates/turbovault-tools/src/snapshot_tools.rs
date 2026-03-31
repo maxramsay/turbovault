@@ -84,20 +84,22 @@ impl From<serde_json::Error> for SnapshotError {
 // Collected note (internal)
 // ---------------------------------------------------------------------------
 
-/// A note collected during the vault walk, before filtering.
+/// A file collected during the vault walk, before filtering.
 struct CollectedNote {
     /// Relative path from vault root (e.g. `subfolder/note.md`).
     relative_path: String,
-    /// Raw file content.
-    content: String,
-    /// Tags extracted from YAML frontmatter.
+    /// Raw file content (bytes — works for both text and binary).
+    content: Vec<u8>,
+    /// Tags extracted from YAML frontmatter (empty for non-markdown files).
     tags: Vec<String>,
-    /// Version number from frontmatter (0 if absent).
+    /// Version number from frontmatter (0 if absent or non-markdown).
     version: u64,
     /// Content hash (sha256:…).
     hash: String,
     /// File size in bytes.
     size_bytes: u64,
+    /// Whether this is a markdown file (frontmatter, wikilinks, tags apply).
+    is_markdown: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -158,12 +160,16 @@ impl SnapshotTools {
             .map(|n| Self::stem_from_path(&n.relative_path))
             .collect();
 
-        // Detect boundary links.
+        // Detect boundary links (markdown files only).
         let wikilink_re = Regex::new(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
             .expect("wikilink regex is valid");
         let mut boundary_links = Vec::new();
         for note in &selected {
-            for cap in wikilink_re.captures_iter(&note.content) {
+            if !note.is_markdown {
+                continue;
+            }
+            let text = String::from_utf8_lossy(&note.content);
+            for cap in wikilink_re.captures_iter(&text) {
                 let target = cap[1].trim();
                 let target_stem = target.to_string();
                 if !included_stems.contains(&target_stem) {
@@ -199,13 +205,13 @@ impl SnapshotTools {
 
         let manifest = SnapshotManifest {
             snapshot_id: snapshot_id.clone(),
-            format_version: 1,
+            format_version: 2,
             org_id: org_id.to_string(),
             created_at: now,
             created_by: actor.to_string(),
             selection: selection.clone(),
             target: target_dir.to_string(),
-            note_count: snapshot_notes.len(),
+            file_count: snapshot_notes.len(),
             total_size_bytes,
             total_hash,
             notes: snapshot_notes,
@@ -234,17 +240,16 @@ impl SnapshotTools {
             manifest_bytes,
         )?;
 
-        // Write each note.
+        // Write each file (notes + attachments).
         for note in &selected {
-            let note_bytes = note.content.as_bytes();
             let mut note_header = tar::Header::new_gnu();
-            note_header.set_size(note_bytes.len() as u64);
+            note_header.set_size(note.content.len() as u64);
             note_header.set_mode(0o644);
             note_header.set_cksum();
             builder.append_data(
                 &mut note_header,
-                format!("{}/notes/{}", &snapshot_id, &note.relative_path),
-                note_bytes,
+                format!("{}/files/{}", &snapshot_id, &note.relative_path),
+                note.content.as_slice(),
             )?;
         }
 
@@ -252,7 +257,7 @@ impl SnapshotTools {
 
         tracing::info!(
             snapshot_id = %manifest.snapshot_id,
-            note_count = manifest.note_count,
+            file_count = manifest.file_count,
             "snapshot created"
         );
 
@@ -390,7 +395,7 @@ impl SnapshotTools {
     // Private helpers
     // -----------------------------------------------------------------------
 
-    /// Walk the vault directory and collect all eligible `.md` files.
+    /// Walk the vault directory and collect all files (markdown + attachments).
     async fn collect_notes(&self) -> Result<Vec<CollectedNote>, SnapshotError> {
         let vault_root = self.vault_root.clone();
         // walkdir is synchronous; run in a blocking context.
@@ -412,29 +417,39 @@ impl SnapshotTools {
                 }
 
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("md") {
-                    continue;
-                }
-
                 let relative = path
                     .strip_prefix(&vault_root)
                     .map_err(|_| SnapshotError::PathError)?
                     .to_string_lossy()
                     .to_string();
 
-                let content = std::fs::read_to_string(path)?;
-                let size_bytes = content.len() as u64;
-                let hash = compute_content_hash(&content);
-                let version_info = read_version_from_content(&content);
-                let tags = Self::extract_tags_from_content(&content);
+                let is_markdown = path.extension().and_then(|e| e.to_str()) == Some("md");
+                let raw_bytes = std::fs::read(path)?;
+                let size_bytes = raw_bytes.len() as u64;
+
+                let (hash, version, tags) = if is_markdown {
+                    // Markdown: parse frontmatter for tags/version, hash body only
+                    let text = String::from_utf8_lossy(&raw_bytes).to_string();
+                    let h = compute_content_hash(&text);
+                    let v = read_version_from_content(&text);
+                    let t = Self::extract_tags_from_content(&text);
+                    (h, v.version, t)
+                } else {
+                    // Binary/non-markdown: hash raw bytes, no metadata
+                    let mut hasher = Sha256::new();
+                    hasher.update(&raw_bytes);
+                    let h = format!("sha256:{:x}", hasher.finalize());
+                    (h, 0u64, Vec::new())
+                };
 
                 notes.push(CollectedNote {
                     relative_path: relative,
-                    content,
+                    content: raw_bytes,
                     tags,
-                    version: version_info.version,
+                    version,
                     hash,
                     size_bytes,
+                    is_markdown,
                 });
             }
             Ok(notes)
@@ -467,7 +482,10 @@ impl SnapshotTools {
         }
     }
 
-    /// Apply the selection filter to collected notes.
+    /// Apply the selection filter to collected files.
+    ///
+    /// For tag-based selections, non-markdown files are excluded (they have no tags).
+    /// Use `All` to capture the complete vault including attachments.
     fn apply_filter<'a>(
         notes: &'a [CollectedNote],
         selection: &SnapshotSelection,
@@ -478,7 +496,7 @@ impl SnapshotTools {
                 let tag_set: HashSet<&str> = tags.iter().map(|s| s.as_str()).collect();
                 notes
                     .iter()
-                    .filter(|n| n.tags.iter().any(|t| tag_set.contains(t.as_str())))
+                    .filter(|n| n.is_markdown && n.tags.iter().any(|t| tag_set.contains(t.as_str())))
                     .collect()
             }
         }
@@ -534,14 +552,17 @@ impl SnapshotTools {
         let dec = GzDecoder::new(file);
         let mut archive = Archive::new(dec);
 
-        let notes_prefix = format!("{}/notes/", snapshot_id);
+        let notes_prefix_v2 = format!("{}/files/", snapshot_id);
+        let notes_prefix_v1 = format!("{}/notes/", snapshot_id);
 
         for entry in archive.entries()? {
             let mut entry = entry?;
             let path = entry.path()?.to_path_buf();
             let path_str = path.to_string_lossy().to_string();
 
-            if let Some(relative) = path_str.strip_prefix(&notes_prefix) {
+            let relative = path_str.strip_prefix(&notes_prefix_v2)
+                .or_else(|| path_str.strip_prefix(&notes_prefix_v1));
+            if let Some(relative) = relative {
                 if relative.is_empty() {
                     continue;
                 }
@@ -605,7 +626,7 @@ mod tests {
             .await
             .expect("create_snapshot should succeed");
 
-        assert_eq!(manifest.note_count, 3);
+        assert_eq!(manifest.file_count, 3);
         assert!(manifest.snapshot_id.ends_with("-full-vault"));
         assert_eq!(manifest.org_id, "org-test");
         assert_eq!(manifest.created_by, "test-user");
@@ -645,7 +666,7 @@ mod tests {
             .await
             .expect("filtered snapshot should succeed");
 
-        assert_eq!(manifest.note_count, 2);
+        assert_eq!(manifest.file_count, 2);
         // All included notes should have fleet-control tag.
         for note in &manifest.notes {
             assert!(
@@ -682,7 +703,7 @@ mod tests {
             .expect("should read manifest from archive");
 
         assert_eq!(roundtrip.snapshot_id, original.snapshot_id);
-        assert_eq!(roundtrip.note_count, original.note_count);
+        assert_eq!(roundtrip.file_count, original.file_count);
         assert_eq!(roundtrip.org_id, original.org_id);
         assert_eq!(roundtrip.total_hash, original.total_hash);
     }

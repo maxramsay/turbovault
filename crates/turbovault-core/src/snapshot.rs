@@ -23,9 +23,10 @@ pub struct SnapshotManifest {
     pub selection: SnapshotSelection,
     /// Target label (e.g. storage backend or path).
     pub target: String,
-    /// Number of notes in the snapshot.
-    pub note_count: usize,
-    /// Total size of all note content in bytes.
+    /// Number of files in the snapshot (notes + attachments).
+    #[serde(alias = "note_count")]
+    pub file_count: usize,
+    /// Total size of all file content in bytes.
     pub total_size_bytes: u64,
     /// Aggregate hash over all note hashes.
     pub total_hash: String,
@@ -156,7 +157,7 @@ mod tests {
                 tags: vec!["docs".to_string()],
             },
             target: "local".to_string(),
-            note_count: 2,
+            file_count: 2,
             total_size_bytes: 4096,
             total_hash: "sha256:abc123".to_string(),
             notes: vec![
@@ -190,7 +191,7 @@ mod tests {
         assert_eq!(roundtrip.snapshot_id, manifest.snapshot_id);
         assert_eq!(roundtrip.format_version, manifest.format_version);
         assert_eq!(roundtrip.org_id, manifest.org_id);
-        assert_eq!(roundtrip.note_count, manifest.note_count);
+        assert_eq!(roundtrip.file_count, manifest.file_count);
         assert_eq!(roundtrip.total_size_bytes, manifest.total_size_bytes);
         assert_eq!(roundtrip.notes.len(), 2);
         assert_eq!(roundtrip.boundary_links.len(), 1);

@@ -60,7 +60,7 @@ async fn test_full_mlp_flow() {
         )
         .await
         .unwrap();
-    assert_eq!(full_manifest.note_count, 2);
+    assert_eq!(full_manifest.file_count, 2);
     assert_eq!(full_manifest.format_version, 1);
     assert!(full_manifest.snapshot_id.ends_with("-full-vault"));
 
@@ -76,7 +76,7 @@ async fn test_full_mlp_flow() {
         )
         .await
         .unwrap();
-    assert_eq!(filtered_manifest.note_count, 1);
+    assert_eq!(filtered_manifest.file_count, 1);
     assert_eq!(filtered_manifest.notes[0].version, 2); // Should have current version
 
     // 6. Delete the tagged note
@@ -89,7 +89,7 @@ async fn test_full_mlp_flow() {
         .restore_snapshot(&archive_path, &RestoreMode::Staging)
         .await
         .unwrap();
-    assert_eq!(restored.note_count, 2);
+    assert_eq!(restored.file_count, 2);
 
     // 8. Verify restored note has correct version and history
     let restore_dir = vault_path.join("_restore").join(&full_manifest.snapshot_id);

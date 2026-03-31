@@ -72,7 +72,7 @@ pub async fn create_snapshot(
             &SnapshotCreatedEvent {
                 snapshot_id: manifest.snapshot_id.clone(),
                 path: target.clone(),
-                version: manifest.note_count as u64,
+                version: manifest.file_count as u64,
             },
         )
         .await;
@@ -178,7 +178,7 @@ pub async fn restore_snapshot(
             &SnapshotRestoredEvent {
                 snapshot_id: manifest.snapshot_id.clone(),
                 path: target,
-                restored_version: manifest.note_count as u64,
+                restored_version: manifest.file_count as u64,
             },
         )
         .await;
